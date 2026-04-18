@@ -8,6 +8,9 @@ const mongoose = require('mongoose');
 exports.getProducts = async (req, res) => {
     try {
         let query = {};
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
         
         if (req.query.category && req.query.category !== 'All Products') {
             const categoryName = req.query.category.trim();
@@ -18,7 +21,7 @@ exports.getProducts = async (req, res) => {
             if (categoryObj) {
                 query.category = categoryObj._id;
             } else {
-                return res.json([]); // No matching category found
+                return res.json({ products: [], page, pages: 0, total: 0 }); // No matching category found
             }
         }
 
@@ -47,13 +50,21 @@ exports.getProducts = async (req, res) => {
         }
 
         // Optimization: Lean queries and field selection to reduce payload
+        const total = await Product.countDocuments(query);
         const products = await Product.find(query)
-            .select('name price oldPrice stock category images brand unit status retailStatus businessStatus retailPricing businessPricing isHot isCombo weight')
+            .select('name stock category images brand retailStatus businessStatus retailPricing businessPricing isHot isCombo weight')
             .populate('category', 'name')
             .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
             .lean();
             
-        res.json(products);
+        res.json({
+            products,
+            page,
+            pages: Math.ceil(total / limit),
+            total
+        });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -84,29 +95,22 @@ exports.getProductById = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         const { 
-            name, description, price, category, stock, images,
-            brand, unit, status, retailStatus, businessStatus, retailPricing, businessPricing,
-            hsnCode, minOrderQty, leadTime
+            name, description, category, stock, images,
+            brand, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
 
         const product = await Product.create({
             name,
             description,
-            price,
             category,
             admin: req.user._id,
             stock,
             images,
             brand,
-            unit,
-            status,
             retailStatus: retailStatus || 'Active',
             businessStatus: businessStatus || 'Active',
             retailPricing,
-            businessPricing,
-            hsnCode,
-            minOrderQty,
-            leadTime
+            businessPricing
         });
 
         res.status(201).json(product);
@@ -121,9 +125,8 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
     try {
         const { 
-            name, description, price, category, stock, images,
-            brand, unit, status, retailStatus, businessStatus, retailPricing, businessPricing,
-            hsnCode, minOrderQty, leadTime
+            name, description, category, stock, images,
+            brand, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
 
         const product = await Product.findById(req.params.id);
@@ -131,20 +134,14 @@ exports.updateProduct = async (req, res) => {
         if (product) {
             product.name = name || product.name;
             product.description = description || product.description;
-            product.price = price !== undefined ? price : product.price;
             product.category = category || product.category;
             product.stock = stock !== undefined ? stock : product.stock;
             product.images = images || product.images;
             product.brand = brand !== undefined ? brand : product.brand;
-            product.unit = unit !== undefined ? unit : product.unit;
-            product.status = status !== undefined ? status : product.status;
             product.retailStatus = retailStatus !== undefined ? retailStatus : product.retailStatus;
             product.businessStatus = businessStatus !== undefined ? businessStatus : product.businessStatus;
             product.retailPricing = retailPricing !== undefined ? retailPricing : product.retailPricing;
             product.businessPricing = businessPricing !== undefined ? businessPricing : product.businessPricing;
-            product.hsnCode = hsnCode !== undefined ? hsnCode : product.hsnCode;
-            product.minOrderQty = minOrderQty !== undefined ? minOrderQty : product.minOrderQty;
-            product.leadTime = leadTime !== undefined ? leadTime : product.leadTime;
 
             const updatedProduct = await product.save();
             res.json(updatedProduct);

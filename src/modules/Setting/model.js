@@ -13,7 +13,7 @@ const settingSchema = new mongoose.Schema({
         freeDeliveryThreshold: { type: Number, default: 500 },
         expressDeliverySurcharge: { type: Number, default: 80 }
     },
-    units: { type: [String], default: ['Packet', 'Kg', 'Litre', 'Piece', 'Box', 'Bottle'] }
+    units: { type: [String], default: ['Unit'] }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Setting', settingSchema);

@@ -32,7 +32,8 @@ exports.addOrderItems = async (req, res) => {
                 shippingAddress,
                 paymentMethod,
                 totalPrice: roundedTotalPrice,
-                type: type || (req.user?.type) || 'Retail'
+                // Force order type to match the customer's actual account type if available
+                type: req.user?.type ? req.user.type : (type || 'Retail')
             });
 
             const createdOrder = await order.save();
@@ -82,6 +83,57 @@ exports.updateOrderStatus = async (req, res) => {
             res.status(404).json({ message: 'Order not found' });
         }
     } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Update order item quantity
+// @route   PUT /api/orders/:id/update-quantity
+// @access  Private/Admin
+exports.updateOrderItemQuantity = async (req, res) => {
+    try {
+        const { itemId, qty } = req.body;
+        
+        if (qty < 0) {
+            return res.status(400).json({ message: 'Quantity cannot be less than 0' });
+        }
+
+        const order = await Order.findById(req.params.id);
+
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found' });
+        }
+
+        let itemFound = false;
+        let newTotalPrice = 0;
+
+        // Iterate, modify quantity and recalculate total
+        for (let i = 0; i < order.orderItems.length; i++) {
+            let currentId = order.orderItems[i]._id;
+            if (currentId && currentId.toString() === itemId) {
+                order.orderItems[i].qty = Number(qty);
+                itemFound = true;
+            }
+            newTotalPrice += (order.orderItems[i].price * order.orderItems[i].qty);
+        }
+
+        if (!itemFound) {
+            return res.status(404).json({ message: 'Item not found in order' });
+        }
+
+        order.totalPrice = Math.round(newTotalPrice);
+        
+        // This is the most reliable way to save nested arrays in Mongoose
+        order.markModified('orderItems');
+        order.markModified('totalPrice');
+        await order.save();
+        
+        // Fetch completely fresh order to return
+        const freshOrder = await Order.findById(req.params.id).populate('admin', 'name email');
+
+        res.json(freshOrder);
+    } catch (error) {
+        console.error("Error in updateQuantity:", error);
         res.status(500).json({ message: error.message });
     }
 };

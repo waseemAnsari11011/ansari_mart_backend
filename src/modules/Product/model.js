@@ -10,23 +10,9 @@ const productSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    price: {
-        type: Number,
-        required: true,
-        default: 0
-    },
     brand: {
         type: String,
         trim: true
-    },
-    unit: {
-        type: String,
-        default: 'Piece'
-    },
-    status: {
-        type: String,
-        enum: ['Active', 'Inactive'],
-        default: 'Active'
     },
     retailStatus: {
         type: String,
@@ -43,7 +29,7 @@ const productSchema = new mongoose.Schema({
         minQty: { type: Number },
         maxQty: { type: Number },
         price: { type: Number, required: true },
-        unit: { type: String, default: 'Piece' },
+        unit: { type: String, default: 'Unit' },
         stock: { type: Number, required: true, default: 0 }
     }],
     businessPricing: [{
@@ -51,7 +37,7 @@ const productSchema = new mongoose.Schema({
         minQty: { type: Number },
         maxQty: { type: Number },
         price: { type: Number, required: true },
-        unit: { type: String, default: 'Piece' },
+        unit: { type: String, default: 'Unit' },
         stock: { type: Number, required: true, default: 0 }
     }],
     category: {
@@ -73,18 +59,6 @@ const productSchema = new mongoose.Schema({
         type: [String],
         default: []
     },
-    hsnCode: {
-        type: String,
-        trim: true
-    },
-    minOrderQty: {
-        type: Number,
-        default: 1
-    },
-    leadTime: {
-        type: String,
-        trim: true
-    }
 }, {
     timestamps: true
 });

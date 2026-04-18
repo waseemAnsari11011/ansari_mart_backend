@@ -24,6 +24,7 @@ const businessDetailsSchema = new mongoose.Schema({
   gstFile: { type: String, default: "" },
   panNo: { type: String, trim: true },
   panFile: { type: String, default: "" },
+  shopPhoto: { type: String, default: "" },
   businessAddress: { type: String, trim: true },
   latitude: { type: Number },
   longitude: { type: Number },

@@ -17,32 +17,38 @@ exports.sendOtp = async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ message: "Phone number is required." });
-    
+
     // Generate a random 4-digit OTP
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
-    
+
     // Store this OTP temporarily
     otpStore[phone] = otp;
 
+    // Bypass for specific number (Subscription expired or testing)
+    if (phone === "9504356457" || phone === "1234567890") {
+      console.log(`[SMS AUTH] Bypassing OTP for ${phone}. Use 1234 to login.`);
+      return res.status(200).json({ message: "OTP sent successfully to your phone number." });
+    }
+
     // Send the OTP via SMS (Renflair)
     const result = await sendOtpCode(phone, otp);
-    
+
     if (result.success) {
-        res.status(200).json({ message: "OTP sent successfully to your phone number." });
+      res.status(200).json({ message: "OTP sent successfully to your phone number." });
     } else {
-        // Map common errors to user-friendly messages
-        let userMessage = "Failed to send OTP. Please try again.";
-        
-        if (result.message === 'I' || result.message?.toLowerCase().includes('invalid')) {
-            userMessage = "Invalid phone number. Please check and try again.";
-        } else if (result.message === 'FAILED' || result.rawStatus === 'FAILED') {
-            userMessage = "SMS service is currently unavailable. Please try later.";
-        }
-        
-        res.status(500).json({ 
-            message: userMessage,
-            error: result.message // For debugging logs if needed
-        });
+      // Map common errors to user-friendly messages
+      let userMessage = "Failed to send OTP. Please try again.";
+
+      if (result.message === 'I' || result.message?.toLowerCase().includes('invalid')) {
+        userMessage = "Invalid phone number. Please check and try again.";
+      } else if (result.message === 'FAILED' || result.rawStatus === 'FAILED') {
+        userMessage = "SMS service is currently unavailable. Please try later.";
+      }
+
+      res.status(500).json({
+        message: userMessage,
+        error: result.message // For debugging logs if needed
+      });
     }
   } catch (error) {
     console.error(error);
@@ -54,7 +60,7 @@ exports.sendOtp = async (req, res) => {
 exports.verifyOtp = async (req, res) => {
   try {
     const { phone, otp, type } = req.body; // type: 'Retail' or 'Business'
-    
+
     if (!phone || !otp) {
       return res.status(400).json({ message: "Phone and OTP are required." });
     }
@@ -74,24 +80,24 @@ exports.verifyOtp = async (req, res) => {
 
     // Find User by phone first to avoid duplicate key error
     let user = await User.findOne({ phone });
-    
+
     if (user) {
-        // If user exists but with different type, inform them
-        if (user.type !== userType) {
-            return res.status(400).json({ 
-                message: `This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.` 
-            });
-        }
-        console.log(`[AUTH] Existing ${userType} user found:`, user._id);
-    } else {
-        console.log(`[AUTH] Creating new ${userType} user for phone:`, phone);
-        user = await User.create({
-            phone: phone,
-            type: userType,
-            status: userType === "Business" ? "Pending" : "Active"
+      // If user exists but with different type, inform them
+      if (user.type !== userType) {
+        return res.status(400).json({
+          message: `This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.`
         });
+      }
+      console.log(`[AUTH] Existing ${userType} user found:`, user._id);
+    } else {
+      console.log(`[AUTH] Creating new ${userType} user for phone:`, phone);
+      user = await User.create({
+        phone: phone,
+        type: userType,
+        status: userType === "Business" ? "Pending" : "Active"
+      });
     }
-    
+
     console.log('[AUTH] Found/Created User ID:', user._id);
 
     if (user.status === "Blocked") {
@@ -146,11 +152,11 @@ exports.getAllUsers = async (req, res) => {
     const { type } = req.query; // 'Retail' or 'Business'
     const query = {};
     if (type) query.type = type;
-    
+
     console.log(`[ADMIN] Fetching users with query:`, query);
     const users = await User.find(query).sort({ createdAt: -1 });
     console.log(`[ADMIN] Found ${users.length} users`);
-    
+
     res.status(200).json(users);
   } catch (error) {
     console.error(error);
@@ -163,11 +169,11 @@ exports.updateUserStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    
+
     if (!["Active", "Blocked", "Pending"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
-    
+
     const update = { status };
     if (status === "Active") {
       update["businessDetails.verificationStatus"] = "Approved";
@@ -177,7 +183,7 @@ exports.updateUserStatus = async (req, res) => {
 
     const user = await User.findByIdAndUpdate(id, update, { new: true });
     if (!user) return res.status(404).json({ message: "User not found" });
-    
+
     res.status(200).json({ message: `User status updated to ${status}`, user });
   } catch (error) {
     console.error(error);
@@ -190,7 +196,7 @@ exports.getUserById = async (req, res) => {
   try {
     const { id } = req.params;
     const user = await User.findById(id).select("-otp -otpExpires");
-    
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -198,7 +204,7 @@ exports.getUserById = async (req, res) => {
     // Get Order Stats
     const orders = await Order.find({ admin: id });
     const ordersCount = orders.length;
-    
+
     const totalSpent = orders
       .filter(o => o.status === 'Delivered')
       .reduce((acc, curr) => acc + curr.totalPrice, 0);
@@ -226,7 +232,7 @@ exports.getUserById = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const { name, address, businessDetails } = req.body;
-    
+
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (address !== undefined) updateData.address = address;
@@ -259,12 +265,12 @@ exports.updateProfile = async (req, res) => {
 exports.addAddress = async (req, res) => {
   try {
     const { label, name, phone, address, city, state, pincode, latitude, longitude, isDefault } = req.body;
-    
+
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const newAddress = { label, name, phone, address, city, state, pincode, latitude, longitude, isDefault };
-    
+
     // If this is the first address or set as default, handle it
     if (isDefault || user.addresses.length === 0) {
       user.addresses.forEach(addr => addr.isDefault = false);
@@ -383,11 +389,11 @@ exports.addToCart = async (req, res) => {
 
     // Identify existing item by BOTH productId and tierIndex
     const tIdx = tierIndex || 0;
-    const existingItemIndex = user.cart.findIndex(item => 
-      item.product.toString() === productId && 
+    const existingItemIndex = user.cart.findIndex(item =>
+      item.product.toString() === productId &&
       (item.tierIndex || 0) === tIdx
     );
-    
+
     if (existingItemIndex > -1) {
       user.cart[existingItemIndex].quantity += quantity;
     } else {
@@ -411,26 +417,26 @@ exports.addBulkToCart = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     if (!items || !Array.isArray(items)) {
-        return res.status(400).json({ message: "Items array is required" });
+      return res.status(400).json({ message: "Items array is required" });
     }
 
     items.forEach(newItem => {
-        const tIdx = newItem.tierIndex || 0;
-        const existingItemIndex = user.cart.findIndex(item => 
-          item.product.toString() === newItem.productId && 
-          (item.tierIndex || 0) === tIdx
-        );
+      const tIdx = newItem.tierIndex || 0;
+      const existingItemIndex = user.cart.findIndex(item =>
+        item.product.toString() === newItem.productId &&
+        (item.tierIndex || 0) === tIdx
+      );
 
-        if (existingItemIndex > -1) {
-            user.cart[existingItemIndex].quantity += newItem.quantity;
-        } else {
-            user.cart.push({ 
-                product: newItem.productId, 
-                quantity: newItem.quantity, 
-                isWholesale: newItem.isWholesale, 
-                tierIndex: tIdx 
-            });
-        }
+      if (existingItemIndex > -1) {
+        user.cart[existingItemIndex].quantity += newItem.quantity;
+      } else {
+        user.cart.push({
+          product: newItem.productId,
+          quantity: newItem.quantity,
+          isWholesale: newItem.isWholesale,
+          tierIndex: tIdx
+        });
+      }
     });
 
     await user.save();
@@ -453,11 +459,11 @@ exports.updateCartQty = async (req, res) => {
 
     const tIdx = tierIndex || 0;
     if (quantity <= 0) {
-      user.cart = user.cart.filter(item => 
+      user.cart = user.cart.filter(item =>
         !(item.product.toString() === productId && (item.tierIndex || 0) === tIdx)
       );
     } else {
-      const item = user.cart.find(item => 
+      const item = user.cart.find(item =>
         item.product.toString() === productId && (item.tierIndex || 0) === tIdx
       );
       if (item) item.quantity = quantity;
@@ -476,16 +482,16 @@ exports.updateCartQty = async (req, res) => {
 exports.removeFromCart = async (req, res) => {
   try {
     const { productId } = req.params;
-    const { tierIndex } = req.query; 
+    const { tierIndex } = req.query;
     const user = await User.findById(req.user._id);
-    
+
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const tIdx = parseInt(tierIndex) || 0;
-    user.cart = user.cart.filter(item => 
+    user.cart = user.cart.filter(item =>
       !(item.product.toString() === productId && (item.tierIndex || 0) === tIdx)
     );
-    
+
     await user.save();
     const updatedUser = await User.findById(req.user._id).populate('cart.product');
     res.status(200).json(updatedUser.cart);
@@ -502,7 +508,7 @@ exports.clearCart = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     user.cart = [];
-    
+
     await user.save();
     res.status(200).json(user.cart);
   } catch (error) {
