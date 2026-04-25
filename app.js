@@ -12,6 +12,7 @@ const orderRoutes = require("./src/modules/Order/route");
 const userRoutes = require("./src/modules/User/route");
 const settingRoutes = require("./src/modules/Setting/route");
 const uploadRoutes = require("./src/modules/Upload/route");
+const deliveryZoneRoutes = require("./src/modules/DeliveryZone/route");
 
 // Initializing express application
 const app = express();
@@ -59,6 +60,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/upload", uploadRoutes);
+app.use("/api/delivery-zones", deliveryZoneRoutes);
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`Server is running at http://0.0.0.0:${port}`);

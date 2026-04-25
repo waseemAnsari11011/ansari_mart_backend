@@ -1,4 +1,5 @@
 const Order = require('./model');
+const { isLocationServiceable } = require('../DeliveryZone/controller');
 
 // @desc    Create new order
 // @route   POST /api/orders
@@ -15,6 +16,16 @@ exports.addOrderItems = async (req, res) => {
         } = req.body;
 
         const effectiveUserId = req.user?._id || adminId;
+
+        // Delivery Area Validation
+        if (shippingAddress && shippingAddress.latitude && shippingAddress.longitude) {
+            const isServiceable = await isLocationServiceable(shippingAddress.latitude, shippingAddress.longitude);
+            if (!isServiceable) {
+                return res.status(400).json({ 
+                    message: 'Sorry, we do not deliver to this location yet.' 
+                });
+            }
+        }
 
         if (orderItems && orderItems.length === 0) {
             return res.status(400).json({ message: 'No order items' });
