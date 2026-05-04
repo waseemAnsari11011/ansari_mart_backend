@@ -52,7 +52,7 @@ exports.getProducts = async (req, res) => {
         // Optimization: Lean queries and field selection to reduce payload
         const total = await Product.countDocuments(query);
         const products = await Product.find(query)
-            .select('name stock category images brand retailStatus businessStatus retailPricing businessPricing isHot isCombo weight')
+            .select('name category images brand retailStatus businessStatus retailPricing businessPricing mrp')
             .populate('category', 'name')
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -95,8 +95,8 @@ exports.getProductById = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         const { 
-            name, description, category, stock, images,
-            brand, retailStatus, businessStatus, retailPricing, businessPricing
+            name, description, category, images,
+            brand, mrp, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
 
         const product = await Product.create({
@@ -104,9 +104,9 @@ exports.createProduct = async (req, res) => {
             description,
             category,
             admin: req.user._id,
-            stock,
             images,
             brand,
+            mrp: mrp || 0,
             retailStatus: retailStatus || 'Active',
             businessStatus: businessStatus || 'Active',
             retailPricing,
@@ -125,8 +125,8 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
     try {
         const { 
-            name, description, category, stock, images,
-            brand, retailStatus, businessStatus, retailPricing, businessPricing
+            name, description, category, images,
+            brand, mrp, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
 
         const product = await Product.findById(req.params.id);
@@ -135,9 +135,9 @@ exports.updateProduct = async (req, res) => {
             product.name = name || product.name;
             product.description = description || product.description;
             product.category = category || product.category;
-            product.stock = stock !== undefined ? stock : product.stock;
             product.images = images || product.images;
             product.brand = brand !== undefined ? brand : product.brand;
+            product.mrp = mrp !== undefined ? mrp : product.mrp;
             product.retailStatus = retailStatus !== undefined ? retailStatus : product.retailStatus;
             product.businessStatus = businessStatus !== undefined ? businessStatus : product.businessStatus;
             product.retailPricing = retailPricing !== undefined ? retailPricing : product.retailPricing;

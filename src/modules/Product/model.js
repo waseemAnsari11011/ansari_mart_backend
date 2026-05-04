@@ -50,14 +50,13 @@ const productSchema = new mongoose.Schema({
         ref: 'Admin',
         required: true
     },
-    stock: {
-        type: Number,
-        required: true,
-        default: 0
-    },
     images: {
         type: [String],
         default: []
+    },
+    mrp: {
+        type: Number,
+        default: 0
     },
 }, {
     timestamps: true
