@@ -428,7 +428,7 @@ exports.addBulkToCart = async (req, res) => {
       );
 
       if (existingItemIndex > -1) {
-        user.cart[existingItemIndex].quantity += newItem.quantity;
+        user.cart[existingItemIndex].quantity = newItem.quantity;
       } else {
         user.cart.push({
           product: newItem.productId,
