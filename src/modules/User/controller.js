@@ -175,12 +175,10 @@ exports.updateUserStatus = async (req, res) => {
     }
 
     const update = { status };
-    if (status === "Active") {
-      update["businessDetails.verificationStatus"] = "Approved";
-    } else if (status === "Pending") {
-      update["businessDetails.verificationStatus"] = "Pending";
-    }
-
+    
+    // Changing account status (Active/Blocked) should NOT automatically approve KYC.
+    // KYC must be handled via the verify-kyc endpoint.
+    
     const user = await User.findByIdAndUpdate(id, update, { new: true });
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -238,9 +236,13 @@ exports.updateProfile = async (req, res) => {
     if (address !== undefined) updateData.address = address;
     if (req.body.profilePhoto !== undefined) updateData.profilePhoto = req.body.profilePhoto;
     if (businessDetails !== undefined) {
+      // Security Fix: Prevent users from setting their own verification status
+      const sanitizedBusinessDetails = { ...businessDetails };
+      delete sanitizedBusinessDetails.verificationStatus;
+
       updateData.businessDetails = {
         ...req.user.businessDetails, // Keep existing details
-        ...businessDetails
+        ...sanitizedBusinessDetails
       };
     }
 
@@ -511,6 +513,51 @@ exports.clearCart = async (req, res) => {
 
     await user.save();
     res.status(200).json(user.cart);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Verify/Reject Business KYC (Admin Only)
+exports.verifyBusinessKYC = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, rejectionReason } = req.body;
+
+    if (!["Approved", "Rejected", "Pending"].includes(status)) {
+      return res.status(400).json({ message: "Invalid verification status" });
+    }
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Logic: Don't allow approval if no documents are present
+    if (status === "Approved") {
+      const d = user.businessDetails || {};
+      const hasDocs = d.gstFile || d.panFile || d.shopPhoto;
+      if (!hasDocs) {
+        return res.status(400).json({ 
+          message: "Cannot approve KYC without at least one document (GST, PAN, or Shop Photo)." 
+        });
+      }
+    }
+
+    user.businessDetails.verificationStatus = status;
+    
+    // If KYC is approved, also activate the account if it was pending
+    if (status === "Approved" && user.status === "Pending") {
+      user.status = "Active";
+    }
+
+    if (status === "Rejected") {
+      user.businessDetails.rejectionReason = rejectionReason || "Documents not clear or missing.";
+    } else {
+      user.businessDetails.rejectionReason = "";
+    }
+
+    await user.save();
+    res.status(200).json({ message: `KYC status updated to ${status}`, user });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });

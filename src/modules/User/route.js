@@ -25,6 +25,7 @@ router.delete("/cart", protectUser, controller.clearCart);
 router.get("/", protect, controller.getAllUsers);
 router.get("/:id", protect, controller.getUserById);
 router.patch("/:id/status", protect, controller.updateUserStatus);
+router.patch("/:id/verify-kyc", protect, controller.verifyBusinessKYC);
 
 // Address Management (Protected)
 router.post("/addresses", protectUser, controller.addAddress);

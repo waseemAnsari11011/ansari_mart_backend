@@ -13,6 +13,7 @@ const userRoutes = require("./src/modules/User/route");
 const settingRoutes = require("./src/modules/Setting/route");
 const uploadRoutes = require("./src/modules/Upload/route");
 const deliveryZoneRoutes = require("./src/modules/DeliveryZone/route");
+const initBackupCron = require("./src/cron/backup.cron");
 
 // Initializing express application
 const app = express();
@@ -64,4 +65,5 @@ app.use("/api/delivery-zones", deliveryZoneRoutes);
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`Server is running at http://0.0.0.0:${port}`);
+  initBackupCron();
 });

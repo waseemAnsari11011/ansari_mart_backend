@@ -47,6 +47,11 @@ const protectUser = async (req, res, next) => {
             }
 
             console.log('[AUTH] User authenticated:', req.user.phone);
+
+            if (req.user.status === 'Blocked') {
+                return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
+            }
+
             next();
         } catch (error) {
             console.error('[AUTH] Token verification failed:', error.message);
@@ -77,6 +82,10 @@ const protectAny = async (req, res, next) => {
 
             if(!user) {
               return res.status(401).json({ message: 'Not authorized, user not found' });
+            }
+
+            if(user.status === 'Blocked') {
+              return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
             req.user = user;
