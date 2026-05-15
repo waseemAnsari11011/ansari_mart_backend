@@ -51,10 +51,12 @@ exports.getProducts = async (req, res) => {
 
         // Optimization: Lean queries and field selection to reduce payload
         const total = await Product.countDocuments(query);
+        const sortOptions = req.query.userType ? { createdAt: -1 } : { mrp: 1, createdAt: -1 };
+
         const products = await Product.find(query)
             .select('name category images brand retailStatus businessStatus retailPricing businessPricing mrp')
             .populate('category', 'name')
-            .sort({ createdAt: -1 })
+            .sort(sortOptions)
             .skip(skip)
             .limit(limit)
             .lean();
