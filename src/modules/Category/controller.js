@@ -39,6 +39,59 @@ exports.getCategories = async (req, res) => {
     }
 };
 
+// @desc    Get categories with top 4 products for home screen
+// @route   GET /api/categories/home
+// @access  Public
+exports.getHomeCategories = async (req, res) => {
+    try {
+        const userType = req.query.userType;
+        
+        let productMatch = { $expr: { $eq: ['$category', '$$catId'] } };
+        if (userType === 'retail') {
+            productMatch.retailStatus = 'Active';
+        } else if (userType === 'business') {
+            productMatch.businessStatus = 'Active';
+        }
+
+        const categories = await Category.aggregate([
+            {
+                $lookup: {
+                    from: 'products',
+                    let: { catId: '$_id' },
+                    pipeline: [
+                        { $match: productMatch },
+                        { $sort: { createdAt: -1 } },
+                        { $limit: 4 },
+                        {
+                            $project: {
+                                name: 1, category: 1, images: 1, brand: 1,
+                                retailStatus: 1, businessStatus: 1,
+                                retailPricing: 1, businessPricing: 1, mrp: 1
+                            }
+                        }
+                    ],
+                    as: 'products'
+                }
+            },
+            {
+                $project: {
+                    name: 1,
+                    description: 1,
+                    image: 1,
+                    status: 1,
+                    products: 1
+                }
+            },
+            {
+                $sort: { createdAt: -1 }
+            }
+        ]);
+        res.json(categories);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 // @route   GET /api/categories/:id
 // @access  Public
 exports.getCategoryById = async (req, res) => {

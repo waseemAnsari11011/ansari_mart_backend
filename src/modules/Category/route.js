@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getCategories, createCategory, deleteCategory, getCategoryById, updateCategory } = require('./controller');
+const { getCategories, getHomeCategories, createCategory, deleteCategory, getCategoryById, updateCategory } = require('./controller');
 const { protect } = require('../Middleware/authMiddleware');
+
+router.route('/home')
+    .get(getHomeCategories);
 
 router.route('/')
     .get(getCategories)
