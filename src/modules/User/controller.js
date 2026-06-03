@@ -5,9 +5,53 @@ const sendOtpCode = require("../../utils/sendOtp");
 
 // In-memory store for OTPs (Development only)
 const otpStore = {};
+const bypassOtpPhones = new Set(["9504356457", "1234567890"]);
 
 const generateToken = (id, type) => {
   return jwt.sign({ id, type }, process.env.JWT_SECRET, { expiresIn: "30d" });
+};
+
+const buildLoginResponse = (user, token) => ({
+  message: "Login successful",
+  user: {
+    _id: user._id,
+    phone: user.phone,
+    type: user.type,
+    status: user.status,
+    name: user.name,
+    businessDetails: user.businessDetails
+  },
+  isNewUser: !user.name,
+  token
+});
+
+const loginOrCreateUser = async (phone, userType) => {
+  let user = await User.findOne({ phone });
+
+  if (user) {
+    if (user.type !== userType) {
+      const error = new Error(`This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    console.log(`[AUTH] Existing ${userType} user found:`, user._id);
+  } else {
+    console.log(`[AUTH] Creating new ${userType} user for phone:`, phone);
+    user = await User.create({
+      phone,
+      type: userType,
+      status: userType === "Business" ? "Pending" : "Active"
+    });
+  }
+
+  if (user.status === "Blocked") {
+    const error = new Error("This account has been blocked. Please contact support.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const token = generateToken(user._id, user.type);
+  return buildLoginResponse(user, token);
 };
 
 // --- Customer (Retail) OTP Auth Mock ---
@@ -15,20 +59,22 @@ const generateToken = (id, type) => {
 // Send OTP
 exports.sendOtp = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, type } = req.body;
     if (!phone) return res.status(400).json({ message: "Phone number is required." });
+
+    const userType = type || "Retail";
+
+    if (bypassOtpPhones.has(phone)) {
+      console.log(`[SMS AUTH] Direct login enabled for bypass number ${phone}.`);
+      const loginData = await loginOrCreateUser(phone, userType);
+      return res.status(200).json(loginData);
+    }
 
     // Generate a random 4-digit OTP
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
 
     // Store this OTP temporarily
     otpStore[phone] = otp;
-
-    // Bypass for specific number (Subscription expired or testing)
-    if (phone === "9504356457" || phone === "1234567890") {
-      console.log(`[SMS AUTH] Bypassing OTP for ${phone}. Use 1234 to login.`);
-      return res.status(200).json({ message: "OTP sent successfully to your phone number." });
-    }
 
     // Send the OTP via SMS (Renflair)
     const result = await sendOtpCode(phone, otp);
@@ -52,7 +98,7 @@ exports.sendOtp = async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error.statusCode || 500).json({ message: error.statusCode ? error.message : "Server error", error: error.message });
   }
 };
 
@@ -78,54 +124,13 @@ exports.verifyOtp = async (req, res) => {
     // Clear OTP after successful verification
     delete otpStore[phone];
 
-    // Find User by phone first to avoid duplicate key error
-    let user = await User.findOne({ phone });
-
-    if (user) {
-      // If user exists but with different type, inform them
-      if (user.type !== userType) {
-        return res.status(400).json({
-          message: `This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.`
-        });
-      }
-      console.log(`[AUTH] Existing ${userType} user found:`, user._id);
-    } else {
-      console.log(`[AUTH] Creating new ${userType} user for phone:`, phone);
-      user = await User.create({
-        phone: phone,
-        type: userType,
-        status: userType === "Business" ? "Pending" : "Active"
-      });
-    }
-
-    console.log('[AUTH] Found/Created User ID:', user._id);
-
-    if (user.status === "Blocked") {
-      return res.status(403).json({ message: "This account has been blocked. Please contact support." });
-    }
-
-    const token = generateToken(user._id, user.type);
-
-    // Check if name is filled (for both Retail and Business)
-    const isNewUser = !user.name;
-
-    res.status(200).json({
-      message: "Login successful",
-      user: {
-        _id: user._id,
-        phone: user.phone,
-        type: user.type,
-        status: user.status,
-        name: user.name,
-        businessDetails: user.businessDetails
-      },
-      isNewUser,
-      token
-    });
+    const loginData = await loginOrCreateUser(phone, userType);
+    console.log('[AUTH] Found/Created User ID:', loginData.user._id);
+    res.status(200).json(loginData);
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error.statusCode || 500).json({ message: error.statusCode ? error.message : "Server error", error: error.message });
   }
 };
 
@@ -175,10 +180,10 @@ exports.updateUserStatus = async (req, res) => {
     }
 
     const update = { status };
-    
+
     // Changing account status (Active/Blocked) should NOT automatically approve KYC.
     // KYC must be handled via the verify-kyc endpoint.
-    
+
     const user = await User.findByIdAndUpdate(id, update, { new: true });
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -537,14 +542,14 @@ exports.verifyBusinessKYC = async (req, res) => {
       const d = user.businessDetails || {};
       const hasDocs = d.gstFile || d.panFile || d.shopPhoto;
       if (!hasDocs) {
-        return res.status(400).json({ 
-          message: "Cannot approve KYC without at least one document (GST, PAN, or Shop Photo)." 
+        return res.status(400).json({
+          message: "Cannot approve KYC without at least one document (GST, PAN, or Shop Photo)."
         });
       }
     }
 
     user.businessDetails.verificationStatus = status;
-    
+
     // If KYC is approved, also activate the account if it was pending
     if (status === "Approved" && user.status === "Pending") {
       user.status = "Active";

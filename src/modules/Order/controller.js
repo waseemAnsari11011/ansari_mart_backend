@@ -1,3 +1,5 @@
+const User = require("../User/model");
+const sendOrderOtp = require("../../utils/orderOtp");
 const Order = require('./model');
 const { isLocationServiceable } = require('../DeliveryZone/controller');
 
@@ -10,19 +12,37 @@ exports.addOrderItems = async (req, res) => {
             orderItems,
             shippingAddress,
             paymentMethod,
-            totalPrice,
             adminId,
             type
         } = req.body;
 
         const effectiveUserId = req.user?._id || adminId;
 
+        // KYC Validation
+        const user = await User.findById(effectiveUserId);
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        if (
+            user.type === "Business" &&
+            user.businessDetails?.verificationStatus !== "Approved"
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "Your KYC is pending approval. You cannot place orders until approved by admin."
+            });
+        }
+
         // Delivery Area Validation
         if (shippingAddress && shippingAddress.latitude && shippingAddress.longitude) {
             const isServiceable = await isLocationServiceable(shippingAddress.latitude, shippingAddress.longitude);
             if (!isServiceable) {
-                return res.status(400).json({ 
-                    message: 'Sorry, we do not deliver to this location yet.' 
+                return res.status(400).json({
+                    message: 'Sorry, we do not deliver to this location yet.'
                 });
             }
         }
@@ -31,23 +51,48 @@ exports.addOrderItems = async (req, res) => {
             return res.status(400).json({ message: 'No order items' });
         } else {
             // Clean numeric calculations to keep DB values as fixed integers without decimals
-            const roundedTotalPrice = Math.round(totalPrice);
             const roundedOrderItems = orderItems.map(item => ({
                 ...item,
                 price: Math.round(item.price)
             }));
+
+            // Calculate subtotal from items
+            const subtotal = roundedOrderItems.reduce(
+                (sum, item) => sum + (item.price * item.qty),
+                0
+            );
+
+            let deliveryFee = 0;
+
+            // Retail Account
+            if ((req.user?.type || type) === "Retail") {
+                if (subtotal < 500) {
+                    deliveryFee = 30;
+                }
+            }
+
+            // Business Account
+            if ((req.user?.type || type) === "Business") {
+                if (subtotal < 4000) {
+                    deliveryFee = 50;
+                }
+            }
+
+            const finalTotalPrice = subtotal + deliveryFee;
 
             const order = new Order({
                 orderItems: roundedOrderItems,
                 admin: effectiveUserId,
                 shippingAddress,
                 paymentMethod,
-                totalPrice: roundedTotalPrice,
+                totalPrice: finalTotalPrice,
+                deliveryFee,
                 // Force order type to match the customer's actual account type if available
                 type: req.user?.type ? req.user.type : (type || 'Retail')
             });
 
             const createdOrder = await order.save();
+            await sendOrderOtp();
             console.log(`[ORDER] Created order ${createdOrder._id} for user ${adminId}`);
             res.status(201).json(createdOrder);
         }
@@ -104,7 +149,7 @@ exports.updateOrderStatus = async (req, res) => {
 exports.updateOrderItemQuantity = async (req, res) => {
     try {
         const { itemId, qty } = req.body;
-        
+
         if (qty < 0) {
             return res.status(400).json({ message: 'Quantity cannot be less than 0' });
         }
@@ -132,13 +177,26 @@ exports.updateOrderItemQuantity = async (req, res) => {
             return res.status(404).json({ message: 'Item not found in order' });
         }
 
-        order.totalPrice = Math.round(newTotalPrice);
-        
+        let deliveryFee = 0;
+
+        if (order.type === "Retail") {
+            deliveryFee = newTotalPrice < 500 ? 30 : 0;
+        }
+
+        if (order.type === "Business") {
+            deliveryFee = newTotalPrice < 4000 ? 50 : 0;
+        }
+
+        order.deliveryFee = deliveryFee;
+        order.totalPrice = Math.round(newTotalPrice + deliveryFee);
+
         // This is the most reliable way to save nested arrays in Mongoose
         order.markModified('orderItems');
         order.markModified('totalPrice');
+        order.markModified('deliveryFee');
+
         await order.save();
-        
+
         // Fetch completely fresh order to return
         const freshOrder = await Order.findById(req.params.id).populate('admin', 'name email');
 
@@ -161,7 +219,7 @@ exports.getMyOrders = async (req, res) => {
             .select('orderItems.image orderItems.name orderItems.qty orderItems.price shippingAddress paymentMethod totalPrice status isDelivered createdAt')
             .sort({ createdAt: -1 })
             .lean();
-            
+
         console.log(`[ORDER] Found ${orders.length} orders for user ${req.user?._id}`);
         res.json(orders);
     } catch (error) {
