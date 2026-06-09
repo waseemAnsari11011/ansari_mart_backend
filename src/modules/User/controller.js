@@ -568,3 +568,24 @@ exports.verifyBusinessKYC = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+exports.saveFcmToken = async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+
+    console.log("🔥 FCM TOKEN RECEIVED:", fcmToken); // 👈 ADD THIS
+
+    if (!fcmToken) {
+      return res.status(400).json({ message: "FCM token required" });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, {
+      fcmToken
+    });
+
+    res.json({ message: "Token saved" });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

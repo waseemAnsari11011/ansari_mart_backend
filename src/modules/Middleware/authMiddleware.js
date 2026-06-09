@@ -13,8 +13,8 @@ const protect = async (req, res, next) => {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
             req.user = await Admin.findById(decoded.id).select('-password');
-            if(!req.user) {
-               return res.status(401).json({ message: 'Not authorized as admin' });
+            if (!req.user) {
+                return res.status(401).json({ message: 'Not authorized as admin' });
             }
 
             next();
@@ -36,14 +36,14 @@ const protectUser = async (req, res, next) => {
         try {
             token = req.headers.authorization.split(' ')[1];
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            
+
             console.log('[AUTH] Decoded Token:', decoded);
             console.log('[AUTH] DB Connection:', mongoose.connection.name);
-            
+
             req.user = await User.findById(decoded.id).select('-password');
-            if(!req.user) {
-              console.log(`[AUTH] User not found for ID: ${decoded.id} in collection: ${User.collection.name}`);
-              return res.status(401).json({ message: 'Not authorized, user not found' });
+            if (!req.user) {
+                console.log(`[AUTH] User not found for ID: ${decoded.id} in collection: ${User.collection.name}`);
+                return res.status(401).json({ message: 'Not authorized, user not found' });
             }
 
             console.log('[AUTH] User authenticated:', req.user.phone);
@@ -75,17 +75,17 @@ const protectAny = async (req, res, next) => {
 
             // Try Admin first
             let user = await Admin.findById(decoded.id).select('-password');
-            if(!user) {
+            if (!user) {
                 // If not Admin, try User
                 user = await User.findById(decoded.id).select('-password');
             }
 
-            if(!user) {
-              return res.status(401).json({ message: 'Not authorized, user not found' });
+            if (!user) {
+                return res.status(401).json({ message: 'Not authorized, user not found' });
             }
 
-            if(user.status === 'Blocked') {
-              return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
+            if (user.status === 'Blocked') {
+                return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
             req.user = user;

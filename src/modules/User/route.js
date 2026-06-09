@@ -33,4 +33,9 @@ router.patch("/addresses/:addressId", protectUser, controller.updateAddress);
 router.delete("/addresses/:addressId", protectUser, controller.deleteAddress);
 router.patch("/addresses/:addressId/default", protectUser, controller.setDefaultAddress);
 
+router.post("/save-fcm-token", (req, res, next) => {
+    console.log("🔥 ROUTE HIT");
+    next();
+}, protectUser, controller.saveFcmToken);
+
 module.exports = router;

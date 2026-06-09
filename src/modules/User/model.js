@@ -28,10 +28,10 @@ const businessDetailsSchema = new mongoose.Schema({
   businessAddress: { type: String, trim: true },
   latitude: { type: Number },
   longitude: { type: Number },
-  verificationStatus: { 
-    type: String, 
-    enum: ["Pending", "Approved", "Rejected"], 
-    default: "Pending" 
+  verificationStatus: {
+    type: String,
+    enum: ["Pending", "Approved", "Rejected"],
+    default: "Pending"
   }
 });
 
@@ -52,6 +52,7 @@ const userSchema = new mongoose.Schema(
       tierIndex: { type: Number, default: 0 },
       isWholesale: { type: Boolean, default: false }
     }],
+    fcmToken: { type: String, default: null }
   },
   { timestamps: true }
 );
