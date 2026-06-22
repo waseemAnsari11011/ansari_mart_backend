@@ -573,19 +573,36 @@ exports.saveFcmToken = async (req, res) => {
   try {
     const { fcmToken } = req.body;
 
-    console.log("🔥 FCM TOKEN RECEIVED:", fcmToken); // 👈 ADD THIS
-
     if (!fcmToken) {
-      return res.status(400).json({ message: "FCM token required" });
+      return res.status(400).json({
+        message: "FCM token required"
+      });
     }
 
-    await User.findByIdAndUpdate(req.user._id, {
-      fcmToken
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found"
+      });
+    }
+
+    if (user.fcmToken !== fcmToken) {
+      user.fcmToken = fcmToken;
+      await user.save();
+
+      console.log("✅ FCM Token Updated");
+    } else {
+      console.log("ℹ️ FCM Token Unchanged");
+    }
+
+    res.json({
+      message: "Token processed"
     });
 
-    res.json({ message: "Token saved" });
-
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message
+    });
   }
 };

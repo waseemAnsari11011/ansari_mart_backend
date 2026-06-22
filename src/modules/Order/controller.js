@@ -1,6 +1,7 @@
 const User = require("../User/model");
 const sendOrderOtp = require("../../utils/orderOtp");
 const Order = require('./model');
+const Setting = require('../Setting/model');
 const { isLocationServiceable } = require('../DeliveryZone/controller');
 
 // @desc    Create new order
@@ -64,17 +65,15 @@ exports.addOrderItems = async (req, res) => {
 
             let deliveryFee = 0;
 
-            // Retail Account
-            if ((req.user?.type || type) === "Retail") {
-                if (subtotal < 500) {
-                    deliveryFee = 30;
-                }
-            }
+            // Fetch logistics settings from DB
+            const appSettings = await Setting.findOne();
+            const logistics = appSettings?.logistics;
+            const userType = req.user?.type || type || 'Retail';
+            const rule = logistics?.[userType];
 
-            // Business Account
-            if ((req.user?.type || type) === "Business") {
-                if (subtotal < 4000) {
-                    deliveryFee = 50;
+            if (rule?.mov != null && rule?.deliveryCharge != null) {
+                if (subtotal < rule.mov) {
+                    deliveryFee = rule.deliveryCharge;
                 }
             }
 
@@ -179,12 +178,16 @@ exports.updateOrderItemQuantity = async (req, res) => {
 
         let deliveryFee = 0;
 
-        if (order.type === "Retail") {
-            deliveryFee = newTotalPrice < 500 ? 30 : 0;
-        }
+        // Fetch logistics settings from DB
+        const appSettings = await Setting.findOne();
+        const logistics = appSettings?.logistics;
+        const userType = order.type || 'Retail';
+        const rule = logistics?.[userType];
 
-        if (order.type === "Business") {
-            deliveryFee = newTotalPrice < 4000 ? 50 : 0;
+        if (rule?.mov != null && rule?.deliveryCharge != null) {
+            if (newTotalPrice < rule.mov) {
+                deliveryFee = rule.deliveryCharge;
+            }
         }
 
         order.deliveryFee = deliveryFee;

@@ -4,13 +4,25 @@ const Setting = require('./model');
 exports.getSettings = async (req, res) => {
     try {
         let settings = await Setting.findOne();
+
         if (!settings) {
-            settings = new Setting();
-            await settings.save();
+            settings = await Setting.create({
+                banners: [],
+                logistics: {
+                    Retail: { mov: 0, deliveryCharge: 0 },
+                    Business: { mov: 0, deliveryCharge: 0 }
+                },
+                units: ['Unit']
+            });
         }
+
         res.status(200).json(settings);
+
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({
+            message: "Server error",
+            error: error.message
+        });
     }
 };
 
@@ -34,15 +46,47 @@ exports.updateBanners = async (req, res) => {
 exports.updateLogistics = async (req, res) => {
     try {
         const { logistics } = req.body;
+
         let settings = await Setting.findOne();
         if (!settings) {
             settings = new Setting();
         }
-        settings.logistics = { ...settings.logistics, ...logistics };
+
+        // 🔥 SAFE INIT (important)
+        if (!settings.logistics) {
+            settings.logistics = {
+                Retail: { mov: 0, deliveryCharge: 0 },
+                Business: { mov: 0, deliveryCharge: 0 }
+            };
+        }
+
+        if (logistics.Retail) {
+            settings.logistics.Retail = {
+                mov: Number(logistics.Retail.mov || 0),
+                deliveryCharge: Number(logistics.Retail.deliveryCharge || 0)
+            };
+        }
+
+        if (logistics.Business) {
+            settings.logistics.Business = {
+                mov: Number(logistics.Business.mov || 0),
+                deliveryCharge: Number(logistics.Business.deliveryCharge || 0)
+            };
+        }
+
+        settings.markModified('logistics');
         await settings.save();
-        res.status(200).json({ message: "Logistics updated successfully", settings });
+
+        res.status(200).json({
+            message: "Logistics updated successfully",
+            settings
+        });
+
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({
+            message: "Server error",
+            error: error.message
+        });
     }
 };
 

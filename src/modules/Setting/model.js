@@ -9,9 +9,14 @@ const bannerSchema = new mongoose.Schema({
 const settingSchema = new mongoose.Schema({
     banners: [bannerSchema],
     logistics: {
-        baseDeliveryCharge: { type: Number, default: 40 },
-        freeDeliveryThreshold: { type: Number, default: 500 },
-        expressDeliverySurcharge: { type: Number, default: 80 }
+        Retail: {
+            mov: { type: Number, default: 0, min: 0 },
+            deliveryCharge: { type: Number, default: 0, min: 0 }
+        },
+        Business: {
+            mov: { type: Number, default: 0, min: 0 },
+            deliveryCharge: { type: Number, default: 0, min: 0 }
+        }
     },
     units: { type: [String], default: ['Unit'] }
 }, { timestamps: true });

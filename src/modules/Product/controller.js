@@ -11,12 +11,12 @@ exports.getProducts = async (req, res) => {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const skip = (page - 1) * limit;
-        
+
         if (req.query.category && req.query.category !== 'All Products') {
             const categoryName = req.query.category.trim();
             const escapedCategoryName = categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const categoryObj = await Category.findOne({ 
-                name: { $regex: new RegExp('^' + escapedCategoryName + '$', 'i') } 
+            const categoryObj = await Category.findOne({
+                name: { $regex: new RegExp('^' + escapedCategoryName + '$', 'i') }
             });
             if (categoryObj) {
                 query.category = categoryObj._id;
@@ -34,7 +34,7 @@ exports.getProducts = async (req, res) => {
         if (req.query.search) {
             const search = req.query.search.trim();
             const searchRegex = new RegExp(search, 'i');
-            
+
             const orConditions = [
                 { name: searchRegex },
                 { brand: searchRegex }
@@ -44,6 +44,7 @@ exports.getProducts = async (req, res) => {
             if (mongoose.Types.ObjectId.isValid(search)) {
                 orConditions.push({ _id: search });
             }
+
 
             query.$and = query.$and || [];
             query.$and.push({ $or: orConditions });
@@ -60,7 +61,7 @@ exports.getProducts = async (req, res) => {
             .skip(skip)
             .limit(limit)
             .lean();
-            
+
         res.json({
             products,
             page,
@@ -96,7 +97,7 @@ exports.getProductById = async (req, res) => {
 // @access  Private/Admin
 exports.createProduct = async (req, res) => {
     try {
-        const { 
+        const {
             name, description, category, images,
             brand, mrp, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
@@ -126,7 +127,7 @@ exports.createProduct = async (req, res) => {
 // @access  Private/Admin
 exports.updateProduct = async (req, res) => {
     try {
-        const { 
+        const {
             name, description, category, images,
             brand, mrp, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
