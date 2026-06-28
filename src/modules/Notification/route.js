@@ -1,7 +1,7 @@
 const router = require("express").Router();
 const controller = require("./controller");
 const { protect } = require("../Middleware/authMiddleware");
-const createS3Upload = require("../Middleware/s3uploadmiddleware");
+const createS3Upload = require("../Middleware/s3UploadMiddleware");
 
 router.post(
     "/send-all",
