@@ -25,6 +25,18 @@ exports.getProducts = async (req, res) => {
             }
         }
 
+        if (req.query.status === 'Active') {
+            query.retailStatus = 'Active';
+            query.businessStatus = 'Active';
+        }
+
+        if (req.query.status === 'Inactive') {
+            query.$or = [
+                { retailStatus: 'Inactive' },
+                { businessStatus: 'Inactive' }
+            ];
+        }
+
         if (req.query.userType === 'retail') {
             query.retailStatus = 'Active';
         } else if (req.query.userType === 'business') {
