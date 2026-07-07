@@ -106,7 +106,8 @@ exports.addOrderItems = async (req, res) => {
 exports.getOrderById = async (req, res) => {
     try {
         const order = await Order.findById(req.params.id)
-            .populate('admin', 'name email');
+            .populate('admin', 'name email')
+            .populate('orderItems.product', 'name brand weight');
 
         if (order) {
             res.json(order);
@@ -201,7 +202,9 @@ exports.updateOrderItemQuantity = async (req, res) => {
         await order.save();
 
         // Fetch completely fresh order to return
-        const freshOrder = await Order.findById(req.params.id).populate('admin', 'name email');
+        const freshOrder = await Order.findById(req.params.id)
+            .populate('admin', 'name email')
+            .populate('orderItems.product', 'name brand weight');
 
         res.json(freshOrder);
     } catch (error) {
@@ -219,7 +222,8 @@ exports.getMyOrders = async (req, res) => {
         // Include essential orderItems fields for list view (image, name, qty, price)
         // but exclude heavy fields like full description
         const orders = await Order.find({ admin: req.user?._id })
-            .select('orderItems.image orderItems.name orderItems.qty orderItems.price shippingAddress paymentMethod totalPrice status isDelivered createdAt')
+            .select('orderItems.image orderItems.name orderItems.qty orderItems.price orderItems.unit orderItems.weight orderItems.tierLabel orderItems.tierIndex orderItems.product shippingAddress paymentMethod totalPrice status isDelivered createdAt')
+            .populate('orderItems.product', 'name brand weight')
             .sort({ createdAt: -1 })
             .lean();
 
@@ -240,6 +244,7 @@ exports.getAdminOrders = async (req, res) => {
             .select('-orderItems.image')
             .sort({ createdAt: -1 })
             .populate('admin', 'name email')
+            .populate('orderItems.product', 'name brand weight')
             .lean();
         res.json(orders);
     } catch (error) {
