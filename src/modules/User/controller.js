@@ -2,21 +2,24 @@ const User = require("./model");
 const Order = require("../Order/model");
 const jwt = require("jsonwebtoken");
 const sendOtpCode = require("../../utils/sendOtp");
+const {
+  DIRECT_LOGIN_PHONES,
+  DUAL_ROLE_LOGIN_PHONES
+} = require("../../utils/authConfig");
 
 // In-memory store for OTPs (Development only)
 const otpStore = {};
-const bypassOtpPhones = new Set(["9504356457", "1234567890"]);
 
 const generateToken = (id, type) => {
   return jwt.sign({ id, type }, process.env.JWT_SECRET, { expiresIn: "30d" });
 };
 
-const buildLoginResponse = (user, token) => ({
+const buildLoginResponse = (user, token, sessionType = user.type) => ({
   message: "Login successful",
   user: {
     _id: user._id,
     phone: user.phone,
-    type: user.type,
+    type: sessionType,
     status: user.status,
     name: user.name,
     businessDetails: user.businessDetails
@@ -29,7 +32,7 @@ const loginOrCreateUser = async (phone, userType) => {
   let user = await User.findOne({ phone });
 
   if (user) {
-    if (user.type !== userType) {
+    if (user.type !== userType && !DUAL_ROLE_LOGIN_PHONES.has(phone)) {
       const error = new Error(`This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.`);
       error.statusCode = 400;
       throw error;
@@ -50,8 +53,17 @@ const loginOrCreateUser = async (phone, userType) => {
     throw error;
   }
 
-  const token = generateToken(user._id, user.type);
-  return buildLoginResponse(user, token);
+  const sessionType = DUAL_ROLE_LOGIN_PHONES.has(phone) ? userType : user.type;
+  const token = generateToken(user._id, sessionType);
+  return buildLoginResponse(user, token, sessionType);
+};
+
+const applyResponseSessionType = (user, sessionUser) => {
+  const responseUser = user.toObject ? user.toObject() : { ...user };
+  if (DUAL_ROLE_LOGIN_PHONES.has(responseUser.phone) && sessionUser?.type) {
+    responseUser.type = sessionUser.type;
+  }
+  return responseUser;
 };
 
 // --- Customer (Retail) OTP Auth Mock ---
@@ -64,7 +76,7 @@ exports.sendOtp = async (req, res) => {
 
     const userType = type || "Retail";
 
-    if (bypassOtpPhones.has(phone)) {
+    if (DIRECT_LOGIN_PHONES.has(phone)) {
       console.log(`[SMS AUTH] Direct login enabled for bypass number ${phone}.`);
       const loginData = await loginOrCreateUser(phone, userType);
       return res.status(200).json(loginData);
@@ -143,7 +155,7 @@ exports.getProfile = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    res.status(200).json(user);
+    res.status(200).json(applyResponseSessionType(user, req.user));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -259,7 +271,10 @@ exports.updateProfile = async (req, res) => {
 
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    res.status(200).json({ message: "Profile updated successfully", user });
+    res.status(200).json({
+      message: "Profile updated successfully",
+      user: applyResponseSessionType(user, req.user)
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });

@@ -2,6 +2,17 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Admin = require('../Admin/model');
 const User = require('../User/model');
+const { DUAL_ROLE_LOGIN_PHONES } = require('../../utils/authConfig');
+
+const applySessionType = (user, decoded) => {
+    if (
+        DUAL_ROLE_LOGIN_PHONES.has(user.phone) &&
+        ['Retail', 'Business'].includes(decoded.type)
+    ) {
+        user.type = decoded.type;
+    }
+    return user;
+};
 
 const protect = async (req, res, next) => {
     let token;
@@ -52,6 +63,8 @@ const protectUser = async (req, res, next) => {
                 return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
+            applySessionType(req.user, decoded);
+
             next();
         } catch (error) {
             console.error('[AUTH] Token verification failed:', error.message);
@@ -88,7 +101,7 @@ const protectAny = async (req, res, next) => {
                 return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
-            req.user = user;
+            req.user = user.phone ? applySessionType(user, decoded) : user;
             next();
         } catch (error) {
             console.error('[AUTH] Token verification failed:', error.message);

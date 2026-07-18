@@ -1,0 +1,9 @@
+const DIRECT_LOGIN_PHONES = new Set([
+  "9504356457",
+  "1234567890",
+  "8882202176"
+]);
+
+const DUAL_ROLE_LOGIN_PHONES = new Set(["8882202176"]);
+
+module.exports = { DIRECT_LOGIN_PHONES, DUAL_ROLE_LOGIN_PHONES };
