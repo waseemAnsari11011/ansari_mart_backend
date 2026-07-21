@@ -19,22 +19,11 @@ exports.addOrderItems = async (req, res) => {
 
         const effectiveUserId = req.user?._id || adminId;
 
-        // KYC Validation
         const user = await User.findById(effectiveUserId);
 
         if (!user) {
             return res.status(404).json({
                 message: "User not found"
-            });
-        }
-
-        if (
-            user.type === "Business" &&
-            user.businessDetails?.verificationStatus !== "Approved"
-        ) {
-            return res.status(403).json({
-                success: false,
-                message: "Your KYC is pending approval. You cannot place orders until approved by admin."
             });
         }
 
