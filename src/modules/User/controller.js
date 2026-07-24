@@ -1,5 +1,6 @@
 const User = require("./model");
 const Order = require("../Order/model");
+const Product = require("../Product/model");
 const jwt = require("jsonwebtoken");
 const sendOtpCode = require("../../utils/sendOtp");
 const {
@@ -64,6 +65,41 @@ const applyResponseSessionType = (user, sessionUser) => {
     responseUser.type = sessionUser.type;
   }
   return responseUser;
+};
+
+const getRequestedTier = async (productId, isWholesale, tierIndex = 0) => {
+  const product = await Product.findById(productId);
+  if (!product) {
+    const error = new Error("Product not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const pricing = isWholesale ? product.businessPricing : product.retailPricing;
+  const tier = pricing?.[Number(tierIndex)];
+  if (!tier) {
+    const error = new Error("Selected product option is no longer available");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { product, tier };
+};
+
+const validateRequestedStock = async ({ productId, quantity, isWholesale, tierIndex = 0 }) => {
+  const requestedQuantity = Number(quantity);
+  if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1) {
+    const error = new Error("Quantity must be a positive whole number");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const { product, tier } = await getRequestedTier(productId, isWholesale, tierIndex);
+  if (requestedQuantity > tier.stock) {
+    const error = new Error(`Only ${tier.stock} item${tier.stock === 1 ? "" : "s"} of ${product.name} are available`);
+    error.statusCode = 400;
+    throw error;
+  }
 };
 
 // --- Customer (Retail) OTP Auth Mock ---
@@ -405,9 +441,10 @@ exports.getCart = async (req, res) => {
 // Add Item to Cart
 exports.addToCart = async (req, res) => {
   try {
-    const { productId, quantity, isWholesale, tierIndex } = req.body;
+    const { productId, quantity, tierIndex } = req.body;
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found" });
+    const isWholesale = req.user.type === "Business";
 
     // Identify existing item by BOTH productId and tierIndex
     const tIdx = tierIndex || 0;
@@ -416,10 +453,21 @@ exports.addToCart = async (req, res) => {
       (item.tierIndex || 0) === tIdx
     );
 
+    const requestedQuantity = Number(quantity);
+    const finalQuantity = existingItemIndex > -1
+      ? user.cart[existingItemIndex].quantity + requestedQuantity
+      : requestedQuantity;
+    await validateRequestedStock({
+      productId,
+      quantity: finalQuantity,
+      isWholesale: Boolean(isWholesale),
+      tierIndex: tIdx
+    });
+
     if (existingItemIndex > -1) {
-      user.cart[existingItemIndex].quantity += quantity;
+      user.cart[existingItemIndex].quantity = finalQuantity;
     } else {
-      user.cart.push({ product: productId, quantity, isWholesale, tierIndex: tIdx });
+      user.cart.push({ product: productId, quantity: requestedQuantity, isWholesale, tierIndex: tIdx });
     }
 
     await user.save();
@@ -427,7 +475,10 @@ exports.addToCart = async (req, res) => {
     res.status(200).json(updatedUser.cart);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -441,6 +492,14 @@ exports.addBulkToCart = async (req, res) => {
     if (!items || !Array.isArray(items)) {
       return res.status(400).json({ message: "Items array is required" });
     }
+    const isWholesale = req.user.type === "Business";
+
+    await Promise.all(items.map(newItem => validateRequestedStock({
+      productId: newItem.productId,
+      quantity: newItem.quantity,
+      isWholesale,
+      tierIndex: newItem.tierIndex || 0
+    })));
 
     items.forEach(newItem => {
       const tIdx = newItem.tierIndex || 0;
@@ -449,13 +508,14 @@ exports.addBulkToCart = async (req, res) => {
         (item.tierIndex || 0) === tIdx
       );
 
+      const requestedQuantity = Number(newItem.quantity);
       if (existingItemIndex > -1) {
-        user.cart[existingItemIndex].quantity = newItem.quantity;
+        user.cart[existingItemIndex].quantity = requestedQuantity;
       } else {
         user.cart.push({
           product: newItem.productId,
-          quantity: newItem.quantity,
-          isWholesale: newItem.isWholesale,
+          quantity: requestedQuantity,
+          isWholesale,
           tierIndex: tIdx
         });
       }
@@ -466,7 +526,10 @@ exports.addBulkToCart = async (req, res) => {
     res.status(200).json(updatedUser.cart);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -488,7 +551,14 @@ exports.updateCartQty = async (req, res) => {
       const item = user.cart.find(item =>
         item.product.toString() === productId && (item.tierIndex || 0) === tIdx
       );
-      if (item) item.quantity = quantity;
+      if (!item) return res.status(404).json({ message: "Item not found in cart" });
+      await validateRequestedStock({
+        productId,
+        quantity,
+        isWholesale: item.isWholesale,
+        tierIndex: tIdx
+      });
+      item.quantity = Number(quantity);
     }
 
     await user.save();
@@ -496,7 +566,10 @@ exports.updateCartQty = async (req, res) => {
     res.status(200).json(updatedUser.cart);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : "Server error",
+      error: error.message
+    });
   }
 };
 

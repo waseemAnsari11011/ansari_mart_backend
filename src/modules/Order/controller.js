@@ -1,6 +1,8 @@
 const User = require("../User/model");
+const mongoose = require('mongoose');
 const sendOrderOtp = require("../../utils/orderOtp");
 const Order = require('./model');
+const Product = require('../Product/model');
 const Setting = require('../Setting/model');
 const { isLocationServiceable } = require('../DeliveryZone/controller');
 
@@ -37,55 +39,95 @@ exports.addOrderItems = async (req, res) => {
             }
         }
 
-        if (orderItems && orderItems.length === 0) {
+        if (!Array.isArray(orderItems) || orderItems.length === 0) {
             return res.status(400).json({ message: 'No order items' });
         } else {
-            // Clean numeric calculations to keep DB values as fixed integers without decimals
-            const roundedOrderItems = orderItems.map(item => ({
-                ...item,
-                price: Math.round(item.price)
-            }));
-
-            // Calculate subtotal from items
-            const subtotal = roundedOrderItems.reduce(
-                (sum, item) => sum + (item.price * item.qty),
-                0
-            );
-
-            let deliveryFee = 0;
-
-            // Fetch logistics settings from DB
-            const appSettings = await Setting.findOne();
-            const logistics = appSettings?.logistics;
             const userType = req.user?.type || type || 'Retail';
-            const rule = logistics?.[userType];
+            const pricingField = userType === 'Business' ? 'businessPricing' : 'retailPricing';
+            let createdOrder;
 
-            if (rule?.mov != null && rule?.deliveryCharge != null) {
-                if (subtotal < rule.mov) {
+            // A transaction prevents two simultaneous checkouts from selling the same stock.
+            await mongoose.connection.transaction(async session => {
+                const validatedItems = [];
+
+                for (const item of orderItems) {
+                    const qty = Number(item.qty);
+                    const tierIndex = Number(item.tierIndex || 0);
+                    if (!Number.isInteger(qty) || qty < 1 || !Number.isInteger(tierIndex) || tierIndex < 0) {
+                        const error = new Error('Order quantities and product options must be valid whole numbers');
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    const product = await Product.findById(item.product).session(session);
+                    if (!product) {
+                        const error = new Error('A product in your cart is no longer available');
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    const tier = product[pricingField]?.[tierIndex];
+                    if (!tier) {
+                        const error = new Error(`${product.name}: selected option is no longer available`);
+                        error.statusCode = 400;
+                        throw error;
+                    }
+                    if (qty > tier.stock) {
+                        const error = new Error(`Only ${tier.stock} item${tier.stock === 1 ? '' : 's'} of ${product.name} are available`);
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    tier.stock -= qty;
+                    await product.save({ session });
+                    validatedItems.push({
+                        product: product._id,
+                        name: product.name,
+                        qty,
+                        image: product.images?.[0] || item.image || '',
+                        price: Math.round(tier.price),
+                        unit: tier.unit || '',
+                        weight: product.weight || product.brand || '',
+                        tierLabel: tier.label || '',
+                        tierIndex
+                    });
+                }
+
+                const subtotal = validatedItems.reduce(
+                    (sum, item) => sum + (item.price * item.qty),
+                    0
+                );
+                let deliveryFee = 0;
+                const appSettings = await Setting.findOne().session(session);
+                const rule = appSettings?.logistics?.[userType];
+                if (rule?.mov != null && rule?.deliveryCharge != null && subtotal < rule.mov) {
                     deliveryFee = rule.deliveryCharge;
                 }
-            }
 
-            const finalTotalPrice = subtotal + deliveryFee;
-
-            const order = new Order({
-                orderItems: roundedOrderItems,
-                admin: effectiveUserId,
-                shippingAddress,
-                paymentMethod,
-                totalPrice: finalTotalPrice,
-                deliveryFee,
-                // Force order type to match the customer's actual account type if available
-                type: req.user?.type ? req.user.type : (type || 'Retail')
+                const orders = await Order.create([{
+                    orderItems: validatedItems,
+                    admin: effectiveUserId,
+                    shippingAddress,
+                    paymentMethod,
+                    totalPrice: subtotal + deliveryFee,
+                    deliveryFee,
+                    type: userType
+                }], { session });
+                createdOrder = orders[0];
             });
 
-            const createdOrder = await order.save();
-            await sendOrderOtp();
+            try {
+                await sendOrderOtp();
+            } catch (notificationError) {
+                // The order is already committed; notification failure must not make
+                // the client retry and create a duplicate order.
+                console.error('[ORDER] OTP notification failed:', notificationError);
+            }
             console.log(`[ORDER] Created order ${createdOrder._id} for user ${adminId}`);
             res.status(201).json(createdOrder);
         }
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.statusCode || 500).json({ message: error.message });
     }
 };
 
@@ -116,6 +158,30 @@ exports.updateOrderStatus = async (req, res) => {
         const order = await Order.findById(req.params.id);
 
         if (order) {
+            if (order.status === 'Cancelled' && req.body.status && req.body.status !== 'Cancelled') {
+                return res.status(400).json({ message: 'A cancelled order cannot be reopened because its stock has been released' });
+            }
+
+            if (req.body.status === 'Cancelled' && order.status !== 'Cancelled') {
+                const pricingField = order.type === 'Business' ? 'businessPricing' : 'retailPricing';
+                await mongoose.connection.transaction(async session => {
+                    const transactionalOrder = await Order.findById(req.params.id).session(session);
+                    if (!transactionalOrder || transactionalOrder.status === 'Cancelled') return;
+
+                    for (const item of transactionalOrder.orderItems) {
+                        const stockPath = `${pricingField}.${item.tierIndex || 0}.stock`;
+                        await Product.updateOne(
+                            { _id: item.product },
+                            { $inc: { [stockPath]: item.qty } },
+                            { session }
+                        );
+                    }
+                    transactionalOrder.status = 'Cancelled';
+                    await transactionalOrder.save({ session });
+                });
+                return res.json(await Order.findById(req.params.id));
+            }
+
             order.status = req.body.status || order.status;
             if (req.body.status === 'Delivered') {
                 order.isDelivered = true;
@@ -138,57 +204,77 @@ exports.updateOrderStatus = async (req, res) => {
 exports.updateOrderItemQuantity = async (req, res) => {
     try {
         const { itemId, qty } = req.body;
+        const requestedQty = Number(qty);
 
-        if (qty < 0) {
-            return res.status(400).json({ message: 'Quantity cannot be less than 0' });
+        if (!Number.isInteger(requestedQty) || requestedQty < 0) {
+            return res.status(400).json({ message: 'Quantity must be a non-negative whole number' });
         }
 
-        const order = await Order.findById(req.params.id);
+        let order;
+        await mongoose.connection.transaction(async session => {
+            order = await Order.findById(req.params.id).session(session);
 
-        if (!order) {
-            return res.status(404).json({ message: 'Order not found' });
-        }
-
-        let itemFound = false;
-        let newTotalPrice = 0;
-
-        // Iterate, modify quantity and recalculate total
-        for (let i = 0; i < order.orderItems.length; i++) {
-            let currentId = order.orderItems[i]._id;
-            if (currentId && currentId.toString() === itemId) {
-                order.orderItems[i].qty = Number(qty);
-                itemFound = true;
+            if (!order) {
+                const error = new Error('Order not found');
+                error.statusCode = 404;
+                throw error;
             }
-            newTotalPrice += (order.orderItems[i].price * order.orderItems[i].qty);
-        }
+            if (order.status === 'Cancelled') {
+                const error = new Error('Cancelled orders cannot be edited');
+                error.statusCode = 400;
+                throw error;
+            }
 
-        if (!itemFound) {
-            return res.status(404).json({ message: 'Item not found in order' });
-        }
+            const item = order.orderItems.id(itemId);
+            if (!item) {
+                const error = new Error('Item not found in order');
+                error.statusCode = 404;
+                throw error;
+            }
 
-        let deliveryFee = 0;
+            const difference = requestedQty - item.qty;
+            const pricingField = order.type === 'Business' ? 'businessPricing' : 'retailPricing';
+            const stockPath = `${pricingField}.${item.tierIndex || 0}.stock`;
+            if (difference > 0) {
+                const result = await Product.updateOne(
+                    { _id: item.product, [stockPath]: { $gte: difference } },
+                    { $inc: { [stockPath]: -difference } },
+                    { session }
+                );
+                if (result.modifiedCount !== 1) {
+                    const error = new Error('Requested quantity exceeds available stock');
+                    error.statusCode = 400;
+                    throw error;
+                }
+            } else if (difference < 0) {
+                await Product.updateOne(
+                    { _id: item.product },
+                    { $inc: { [stockPath]: -difference } },
+                    { session }
+                );
+            }
 
-        // Fetch logistics settings from DB
-        const appSettings = await Setting.findOne();
-        const logistics = appSettings?.logistics;
-        const userType = order.type || 'Retail';
-        const rule = logistics?.[userType];
+            item.qty = requestedQty;
+            const newTotalPrice = order.orderItems.reduce(
+                (sum, orderItem) => sum + (orderItem.price * orderItem.qty),
+                0
+            );
 
-        if (rule?.mov != null && rule?.deliveryCharge != null) {
-            if (newTotalPrice < rule.mov) {
+            let deliveryFee = 0;
+
+            const appSettings = await Setting.findOne().session(session);
+            const logistics = appSettings?.logistics;
+            const userType = order.type || 'Retail';
+            const rule = logistics?.[userType];
+
+            if (rule?.mov != null && rule?.deliveryCharge != null && newTotalPrice < rule.mov) {
                 deliveryFee = rule.deliveryCharge;
             }
-        }
 
-        order.deliveryFee = deliveryFee;
-        order.totalPrice = Math.round(newTotalPrice + deliveryFee);
-
-        // This is the most reliable way to save nested arrays in Mongoose
-        order.markModified('orderItems');
-        order.markModified('totalPrice');
-        order.markModified('deliveryFee');
-
-        await order.save();
+            order.deliveryFee = deliveryFee;
+            order.totalPrice = Math.round(newTotalPrice + deliveryFee);
+            await order.save({ session });
+        });
 
         // Fetch completely fresh order to return
         const freshOrder = await Order.findById(req.params.id)
@@ -198,7 +284,7 @@ exports.updateOrderItemQuantity = async (req, res) => {
         res.json(freshOrder);
     } catch (error) {
         console.error("Error in updateQuantity:", error);
-        res.status(500).json({ message: error.message });
+        res.status(error.statusCode || 500).json({ message: error.message });
     }
 };
 
