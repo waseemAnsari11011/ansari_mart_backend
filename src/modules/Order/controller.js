@@ -6,6 +6,44 @@ const Product = require('../Product/model');
 const Setting = require('../Setting/model');
 const { isLocationServiceable } = require('../DeliveryZone/controller');
 
+const cancelOrderAndRestoreStock = async (orderId, allowedStatuses = null) => {
+    let cancelledOrder;
+
+    await mongoose.connection.transaction(async session => {
+        const order = await Order.findById(orderId).session(session);
+
+        if (!order) {
+            const error = new Error('Order not found');
+            error.statusCode = 404;
+            throw error;
+        }
+        if (order.status === 'Cancelled') {
+            cancelledOrder = order;
+            return;
+        }
+        if (allowedStatuses && !allowedStatuses.includes(order.status)) {
+            const error = new Error(`This order cannot be cancelled because it is already ${order.status.toLowerCase()}`);
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const pricingField = order.type === 'Business' ? 'businessPricing' : 'retailPricing';
+        for (const item of order.orderItems) {
+            const stockPath = `${pricingField}.${item.tierIndex || 0}.stock`;
+            await Product.updateOne(
+                { _id: item.product },
+                { $inc: { [stockPath]: item.qty } },
+                { session }
+            );
+        }
+
+        order.status = 'Cancelled';
+        cancelledOrder = await order.save({ session });
+    });
+
+    return cancelledOrder;
+};
+
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Public
@@ -136,15 +174,22 @@ exports.addOrderItems = async (req, res) => {
 // @access  Private/Admin
 exports.getOrderById = async (req, res) => {
     try {
-        const order = await Order.findById(req.params.id)
-            .populate('admin', 'name email')
-            .populate('orderItems.product', 'name brand weight');
+        const order = await Order.findById(req.params.id);
 
-        if (order) {
-            res.json(order);
-        } else {
+        if (!order) {
             res.status(404).json({ message: 'Order not found' });
+            return;
         }
+
+        const isAdmin = req.user?.constructor?.modelName === 'Admin';
+        const isOwner = order.admin?.equals?.(req.user?._id);
+        if (!isAdmin && !isOwner) {
+            return res.status(403).json({ message: 'You are not authorized to view this order' });
+        }
+
+        await order.populate('admin', 'name email');
+        await order.populate('orderItems.product', 'name brand weight');
+        res.json(order);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -163,23 +208,7 @@ exports.updateOrderStatus = async (req, res) => {
             }
 
             if (req.body.status === 'Cancelled' && order.status !== 'Cancelled') {
-                const pricingField = order.type === 'Business' ? 'businessPricing' : 'retailPricing';
-                await mongoose.connection.transaction(async session => {
-                    const transactionalOrder = await Order.findById(req.params.id).session(session);
-                    if (!transactionalOrder || transactionalOrder.status === 'Cancelled') return;
-
-                    for (const item of transactionalOrder.orderItems) {
-                        const stockPath = `${pricingField}.${item.tierIndex || 0}.stock`;
-                        await Product.updateOne(
-                            { _id: item.product },
-                            { $inc: { [stockPath]: item.qty } },
-                            { session }
-                        );
-                    }
-                    transactionalOrder.status = 'Cancelled';
-                    await transactionalOrder.save({ session });
-                });
-                return res.json(await Order.findById(req.params.id));
+                return res.json(await cancelOrderAndRestoreStock(req.params.id));
             }
 
             order.status = req.body.status || order.status;
@@ -195,6 +224,30 @@ exports.updateOrderStatus = async (req, res) => {
         }
     } catch (error) {
         res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Cancel the logged-in customer's pending order
+// @route   PUT /api/orders/:id/cancel
+// @access  Private/Customer
+exports.cancelMyOrder = async (req, res) => {
+    try {
+        const order = await Order.findOne({
+            _id: req.params.id,
+            admin: req.user._id
+        });
+
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found' });
+        }
+
+        const cancelledOrder = await cancelOrderAndRestoreStock(
+            order._id,
+            ['Pending']
+        );
+        res.json(cancelledOrder);
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ message: error.message });
     }
 };
 
