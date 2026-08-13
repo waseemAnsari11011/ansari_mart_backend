@@ -6,9 +6,24 @@ const {
     deleteS3Objects,
 } = require("../Middleware/s3DeleteUtil");
 
+const VALID_AUDIENCES = new Set(["All", "Retail", "Business"]);
+
+const getUsersForAudience = (audience) => {
+    const query = {
+        fcmToken: { $exists: true, $nin: [null, ""] },
+    };
+
+    if (audience !== "All") {
+        query.type = audience;
+    }
+
+    return User.find(query).select("fcmToken");
+};
+
 exports.sendToAllUsers = async (req, res) => {
     try {
         const { title, body, productId } = req.body;
+        const audience = req.body.audience || "All";
 
         console.log("REQ FILES =>", req.files);
         console.log("REQ BODY =>", req.body);
@@ -17,6 +32,13 @@ exports.sendToAllUsers = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Title and body are required",
+            });
+        }
+
+        if (!VALID_AUDIENCES.has(audience)) {
+            return res.status(400).json({
+                success: false,
+                message: "Audience must be All, Retail, or Business",
             });
         }
 
@@ -32,9 +54,7 @@ exports.sendToAllUsers = async (req, res) => {
         }
 
         // 2. GET USERS TOKENS
-        const users = await User.find({
-            fcmToken: { $exists: true, $ne: null },
-        });
+        const users = await getUsersForAudience(audience);
 
         let tokens = users.map((u) => u.fcmToken);
         tokens = [...new Set(tokens)];
@@ -42,7 +62,7 @@ exports.sendToAllUsers = async (req, res) => {
         if (tokens.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: "No users found",
+                message: `No ${audience.toLowerCase()} users with notifications enabled were found`,
             });
         }
 
@@ -72,6 +92,7 @@ exports.sendToAllUsers = async (req, res) => {
             body,
             imageUrl,
             recipientCount: tokens.length,
+            audience,
             productId: productId || null,
         });
 
@@ -162,9 +183,10 @@ exports.resendNotification = async (req, res) => {
             });
         }
 
-        const users = await User.find({
-            fcmToken: { $exists: true, $ne: null },
-        });
+        const audience = VALID_AUDIENCES.has(notification.audience)
+            ? notification.audience
+            : "All";
+        const users = await getUsersForAudience(audience);
 
         let tokens = users.map((u) => u.fcmToken);
         tokens = [...new Set(tokens)];
@@ -172,7 +194,7 @@ exports.resendNotification = async (req, res) => {
         if (tokens.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: "No users found",
+                message: `No ${audience.toLowerCase()} users with notifications enabled were found`,
             });
         }
 
@@ -199,6 +221,7 @@ exports.resendNotification = async (req, res) => {
             success: true,
             sent: response.successCount,
             failed: response.failureCount,
+            audience,
             message: "Notification resent successfully",
         });
 

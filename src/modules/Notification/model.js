@@ -24,6 +24,12 @@ const notificationSchema = new mongoose.Schema(
             default: 0,
         },
 
+        audience: {
+            type: String,
+            enum: ["All", "Retail", "Business"],
+            default: "All",
+        },
+
         productId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
