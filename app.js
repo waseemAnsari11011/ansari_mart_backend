@@ -46,13 +46,13 @@ const mongoUri = `mongodb+srv://${process.env.MONGO_USERNAME}:${process.env.MONG
 mongoose
   .connect(mongoUri)
   .then(() => {
-    console.log("Connected to MongoDB Atlas (AnsariMart)");
+    console.log("Connected to MongoDB Atlas (amart)");
   })
   .catch((err) => console.error("Could not connect to MongoDB", err));
 
 // Basic Route
 app.get("/", (req, res) => {
-  res.send("AnsariMart Backend is running...");
+  res.send("amart Backend is running...");
 });
 
 // Routes

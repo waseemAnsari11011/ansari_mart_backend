@@ -7,7 +7,7 @@ const backupService = require('../services/backup.service');
  * Timezone: Asia/Kolkata
  */
 const initBackupCron = () => {
-    console.log('[cron] Initializing MongoDB backup schedule for AnsariMart...');
+    console.log('[cron] Initializing MongoDB backup schedule for amart...');
     
     // Schedule: 0 2 * * * (2:00 AM IST)
     cron.schedule('0 2 * * *', async () => {

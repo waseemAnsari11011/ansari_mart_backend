@@ -12,7 +12,7 @@ const {
 const otpStore = {};
 
 const generateToken = (id, type) => {
-  return jwt.sign({ id, type }, process.env.JWT_SECRET, { expiresIn: "30d" });
+  return jwt.sign({ id, type }, process.env.JWT_SECRET);
 };
 
 const buildLoginResponse = (user, token, sessionType = user.type) => ({
