@@ -277,7 +277,6 @@ exports.updateOrderItemQuantity = async (req, res) => {
                 error.statusCode = 400;
                 throw error;
             }
-
             const item = order.orderItems.id(itemId);
             if (!item) {
                 const error = new Error('Item not found in order');
@@ -364,6 +363,11 @@ exports.updateOrderItemPrice = async (req, res) => {
             }
             if (order.status === 'Cancelled') {
                 const error = new Error('Cancelled orders cannot be edited');
+                error.statusCode = 400;
+                throw error;
+            }
+            if (order.status === 'Delivered') {
+                const error = new Error('Delivered order prices cannot be changed');
                 error.statusCode = 400;
                 throw error;
             }
