@@ -341,6 +341,70 @@ exports.updateOrderItemQuantity = async (req, res) => {
     }
 };
 
+// @desc    Update the customer-specific unit price of an order item
+// @route   PUT /api/orders/:id/update-price
+// @access  Private/Admin
+exports.updateOrderItemPrice = async (req, res) => {
+    try {
+        const { itemId, price } = req.body;
+        const requestedPrice = Number(price);
+
+        if (price === null || price === '' || !Number.isInteger(requestedPrice) || requestedPrice < 0) {
+            return res.status(400).json({ message: 'Unit price must be a non-negative whole rupee amount' });
+        }
+
+        let order;
+        await mongoose.connection.transaction(async session => {
+            order = await Order.findById(req.params.id).session(session);
+
+            if (!order) {
+                const error = new Error('Order not found');
+                error.statusCode = 404;
+                throw error;
+            }
+            if (order.status === 'Cancelled') {
+                const error = new Error('Cancelled orders cannot be edited');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const item = order.orderItems.id(itemId);
+            if (!item) {
+                const error = new Error('Item not found in order');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            item.price = requestedPrice;
+            const itemsSubtotal = order.orderItems.reduce(
+                (sum, orderItem) => sum + (orderItem.price * orderItem.qty),
+                0
+            );
+
+            let deliveryFee = 0;
+            const appSettings = await Setting.findOne().session(session);
+            const userType = order.type || 'Retail';
+            const rule = appSettings?.logistics?.[userType];
+            if (rule?.mov != null && rule?.deliveryCharge != null && itemsSubtotal < rule.mov) {
+                deliveryFee = rule.deliveryCharge;
+            }
+
+            order.deliveryFee = deliveryFee;
+            order.totalPrice = Math.round((itemsSubtotal + deliveryFee) * 100) / 100;
+            await order.save({ session });
+        });
+
+        const freshOrder = await Order.findById(req.params.id)
+            .populate('admin', 'name email')
+            .populate('orderItems.product', 'name brand weight');
+
+        res.json(freshOrder);
+    } catch (error) {
+        console.error('Error in updatePrice:', error);
+        res.status(error.statusCode || 500).json({ message: error.message });
+    }
+};
+
 // @desc    Get logged in user orders
 // @route   GET /api/orders/myorders
 // @access  Private
