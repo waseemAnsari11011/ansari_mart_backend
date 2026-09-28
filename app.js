@@ -16,6 +16,7 @@ const deliveryZoneRoutes = require("./src/modules/DeliveryZone/route");
 const helpSupportRoutes = require("./src/modules/HelpSupport/route");
 const initBackupCron = require("./src/cron/backup.cron");
 const notificationRoutes = require("./src/modules/Notification/route");
+const createPlatformAccessRouter = require("./src/modules/PlatformAccess/route");
 
 // Initializing express application
 const app = express();
@@ -26,7 +27,7 @@ app.use(
     origin: "*",
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
     credentials: true,
-    allowedHeaders: "Content-Type,Authorization",
+    allowedHeaders: "Content-Type,Authorization,X-Platform-Control-Key",
   })
 );
 
@@ -35,6 +36,8 @@ const port = process.env.PORT || 8000;
 // Middleware
 app.use(compression());
 app.use(morgan("dev"));
+// Control endpoint stays reachable; all other APIs are gated before parsing/auth.
+app.use("/api", createPlatformAccessRouter());
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
 
