@@ -17,7 +17,7 @@ const getUsersForAudience = (audience) => {
         query.type = audience;
     }
 
-    return User.find(query).select("fcmToken");
+    return User.find({ ...query, deletedAt: null }).select("fcmToken");
 };
 
 exports.sendToAllUsers = async (req, res) => {

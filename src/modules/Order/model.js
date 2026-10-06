@@ -43,6 +43,12 @@ const orderSchema = new mongoose.Schema({
         required: true,
         default: 0.0
     },
+    subtotal: { type: Number },
+    discountAmount: { type: Number, default: 0 },
+    discountProducts: [{ product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' }, tierIndex: Number, offerPrice: Number, qty: Number, _id: false }],
+    discountName: { type: String, default: '' },
+    discountRulesSnapshot: { type: [require('../Setting/discountSchema')], default: undefined, select: false },
+    firstOrderAtCheckout: { type: Boolean, default: false, select: false },
     deliveryFee: {
         type: Number,
         default: 0

@@ -4,6 +4,7 @@ const sendOrderOtp = require("../../utils/orderOtp");
 const Order = require('./model');
 const Product = require('../Product/model');
 const Setting = require('../Setting/model');
+const { priceOrder, normalizeLiveRules, normalizeSnapshotRules } = require('../../utils/discounts');
 const { isLocationServiceable } = require('../DeliveryZone/controller');
 
 const cancelOrderAndRestoreStock = async (orderId, allowedStatuses = null) => {
@@ -53,11 +54,10 @@ exports.addOrderItems = async (req, res) => {
             orderItems,
             shippingAddress,
             paymentMethod,
-            adminId,
-            type
+            adminId
         } = req.body;
 
-        const effectiveUserId = req.user?._id || adminId;
+        const effectiveUserId = req.user?.constructor?.modelName === 'Admin' ? adminId : req.user?._id;
 
         const user = await User.findById(effectiveUserId);
 
@@ -66,6 +66,8 @@ exports.addOrderItems = async (req, res) => {
                 message: "User not found"
             });
         }
+
+        if (user.deletedAt) return res.status(403).json({ message: 'Cannot create orders for a deleted customer' });
 
         // Delivery Area Validation
         if (shippingAddress && shippingAddress.latitude && shippingAddress.longitude) {
@@ -80,12 +82,15 @@ exports.addOrderItems = async (req, res) => {
         if (!Array.isArray(orderItems) || orderItems.length === 0) {
             return res.status(400).json({ message: 'No order items' });
         } else {
-            const userType = req.user?.type || type || 'Retail';
+            const userType = req.user?.constructor?.modelName === 'Admin' ? user.type : req.user.type;
             const pricingField = userType === 'Business' ? 'businessPricing' : 'retailPricing';
             let createdOrder;
 
             // A transaction prevents two simultaneous checkouts from selling the same stock.
             await mongoose.connection.transaction(async session => {
+                // Serialize checkouts for this customer, including carts with disjoint products.
+                await User.updateOne({ _id: effectiveUserId }, { $inc: { checkoutSequence: 1 } }, { session });
+                const isFirstOrder = !(await Order.exists({ admin: effectiveUserId }).session(session));
                 const validatedItems = [];
 
                 for (const item of orderItems) {
@@ -142,13 +147,21 @@ exports.addOrderItems = async (req, res) => {
                     deliveryFee = rule.deliveryCharge;
                 }
 
+                const discountRules = normalizeLiveRules(appSettings?.discountRules);
+                const pricing = priceOrder(subtotal, deliveryFee, discountRules, userType, isFirstOrder, validatedItems);
+                if (req.body.expectedTotal !== undefined && req.body.expectedTotal !== pricing.totalPrice) {
+                    const error = new Error('Your total changed. Please review the updated total and place the order again.');
+                    error.statusCode = 409;
+                    throw error;
+                }
                 const orders = await Order.create([{
                     orderItems: validatedItems,
                     admin: effectiveUserId,
                     shippingAddress,
                     paymentMethod,
-                    totalPrice: subtotal + deliveryFee,
-                    deliveryFee,
+                    ...pricing,
+                    discountRulesSnapshot: discountRules,
+                    firstOrderAtCheckout: isFirstOrder,
                     type: userType
                 }], { session });
                 createdOrder = orders[0];
@@ -265,7 +278,7 @@ exports.updateOrderItemQuantity = async (req, res) => {
 
         let order;
         await mongoose.connection.transaction(async session => {
-            order = await Order.findById(req.params.id).session(session);
+            order = await Order.findById(req.params.id).select('+discountRulesSnapshot +firstOrderAtCheckout').session(session);
 
             if (!order) {
                 const error = new Error('Order not found');
@@ -324,7 +337,8 @@ exports.updateOrderItemQuantity = async (req, res) => {
             }
 
             order.deliveryFee = deliveryFee;
-            order.totalPrice = Math.round(newTotalPrice + deliveryFee);
+            order.discountProducts = [];
+            Object.assign(order, priceOrder(newTotalPrice, deliveryFee, normalizeSnapshotRules(order.discountRulesSnapshot), userType, order.firstOrderAtCheckout, order.orderItems));
             await order.save({ session });
         });
 
@@ -354,7 +368,7 @@ exports.updateOrderItemPrice = async (req, res) => {
 
         let order;
         await mongoose.connection.transaction(async session => {
-            order = await Order.findById(req.params.id).session(session);
+            order = await Order.findById(req.params.id).select('+discountRulesSnapshot +firstOrderAtCheckout').session(session);
 
             if (!order) {
                 const error = new Error('Order not found');
@@ -394,7 +408,8 @@ exports.updateOrderItemPrice = async (req, res) => {
             }
 
             order.deliveryFee = deliveryFee;
-            order.totalPrice = Math.round((itemsSubtotal + deliveryFee) * 100) / 100;
+            order.discountProducts = [];
+            Object.assign(order, priceOrder(itemsSubtotal, deliveryFee, normalizeSnapshotRules(order.discountRulesSnapshot), userType, order.firstOrderAtCheckout, order.orderItems));
             await order.save({ session });
         });
 
@@ -418,7 +433,7 @@ exports.getMyOrders = async (req, res) => {
         // Include essential orderItems fields for list view (image, name, qty, price)
         // but exclude heavy fields like full description
         const orders = await Order.find({ admin: req.user?._id })
-            .select('orderItems.image orderItems.name orderItems.qty orderItems.price orderItems.unit orderItems.weight orderItems.tierLabel orderItems.tierIndex orderItems.product shippingAddress paymentMethod totalPrice status isDelivered createdAt')
+            .select('orderItems.image orderItems.name orderItems.qty orderItems.price orderItems.unit orderItems.weight orderItems.tierLabel orderItems.tierIndex orderItems.product shippingAddress paymentMethod totalPrice subtotal deliveryFee discountAmount discountName discountProducts status isDelivered createdAt')
             .populate('orderItems.product', 'name brand weight')
             .sort({ createdAt: -1 })
             .lean();
@@ -443,6 +458,38 @@ exports.getAdminOrders = async (req, res) => {
             .populate('orderItems.product', 'name brand weight')
             .lean();
         res.json(orders);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Server-priced checkout preview; client totals and eligibility are never trusted.
+exports.previewOrder = async (req, res) => {
+    try {
+        const { orderItems } = req.body;
+        if (!Array.isArray(orderItems) || !orderItems.length) return res.status(400).json({ message: 'No order items' });
+        const userType = req.user.type;
+        const pricingField = userType === 'Business' ? 'businessPricing' : 'retailPricing';
+        let subtotal = 0;
+        const quantities = new Map();
+        const pricedItems = [];
+        for (const item of orderItems) {
+            const qty = Number(item.qty);
+            const tierIndex = Number(item.tierIndex || 0);
+            if (!Number.isInteger(qty) || qty < 1 || !Number.isInteger(tierIndex) || tierIndex < 0 || !mongoose.isValidObjectId(item.product)) return res.status(400).json({ message: 'Invalid cart item' });
+            const product = await Product.findById(item.product);
+            const tier = product?.[pricingField]?.[tierIndex];
+            const key = `${item.product}:${tierIndex}`;
+            quantities.set(key, (quantities.get(key) || 0) + qty);
+            if (!tier || quantities.get(key) > tier.stock) return res.status(400).json({ message: 'A cart item is unavailable or exceeds stock' });
+            subtotal += Math.round(tier.price) * qty;
+            pricedItems.push({ product: product._id, price: Math.round(tier.price), qty, tierIndex });
+        }
+        const settings = await Setting.findOne();
+        const isFirstOrder = !(await Order.exists({ admin: req.user._id }));
+        const logistics = settings?.logistics?.[userType];
+        const deliveryFee = subtotal < (logistics?.mov || 0) ? (logistics.deliveryCharge || 0) : 0;
+        res.json(priceOrder(subtotal, deliveryFee, normalizeLiveRules(settings?.discountRules), userType, isFirstOrder, pricedItems));
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

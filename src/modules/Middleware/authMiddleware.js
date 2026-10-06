@@ -59,10 +59,14 @@ const protectUser = async (req, res, next) => {
 
             console.log('[AUTH] User authenticated:', req.user.phone);
 
+            if (req.user.deletedAt) return res.status(401).json({ message: 'This account has been deleted. Please contact support.' });
             if (req.user.status === 'Blocked') {
                 return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
+            if ((decoded.authVersion || 0) !== (req.user.authVersion || 0)) {
+                return res.status(401).json({ message: 'Your account has changed. Please log in again.' });
+            }
             applySessionType(req.user, decoded);
 
             next();
@@ -97,10 +101,14 @@ const protectAny = async (req, res, next) => {
                 return res.status(401).json({ message: 'Not authorized, user not found' });
             }
 
+            if (user.deletedAt) return res.status(401).json({ message: 'This account has been deleted. Please contact support.' });
             if (user.status === 'Blocked') {
                 return res.status(403).json({ message: 'This account has been blocked. Please contact support.' });
             }
 
+            if (user.constructor?.modelName === 'User' && (decoded.authVersion || 0) !== (user.authVersion || 0)) {
+                return res.status(401).json({ message: 'Your account has changed. Please log in again.' });
+            }
             req.user = user.phone ? applySessionType(user, decoded) : user;
             next();
         } catch (error) {

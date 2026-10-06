@@ -52,6 +52,10 @@ const userSchema = new mongoose.Schema(
       tierIndex: { type: Number, default: 0 },
       isWholesale: { type: Boolean, default: false }
     }],
+    deletedAt: { type: Date, default: null, index: true },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    authVersion: { type: Number, default: 0 },
+    checkoutSequence: { type: Number, default: 0, select: false },
     fcmToken: { type: String, default: null }
   },
   { timestamps: true }

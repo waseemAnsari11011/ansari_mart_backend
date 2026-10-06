@@ -11,8 +11,8 @@ const {
 // In-memory store for OTPs (Development only)
 const otpStore = {};
 
-const generateToken = (id, type) => {
-  return jwt.sign({ id, type }, process.env.JWT_SECRET);
+const generateToken = (id, type, authVersion = 0) => {
+  return jwt.sign({ id, type, authVersion }, process.env.JWT_SECRET);
 };
 
 const buildLoginResponse = (user, token, sessionType = user.type) => ({
@@ -33,6 +33,11 @@ const loginOrCreateUser = async (phone, userType) => {
   let user = await User.findOne({ phone });
 
   if (user) {
+    if (user.deletedAt) {
+      const error = new Error('This account has been deleted. Please contact support.');
+      error.statusCode = 403;
+      throw error;
+    }
     if (user.type !== userType && !DUAL_ROLE_LOGIN_PHONES.has(phone)) {
       const error = new Error(`This phone number is already registered as a ${user.type} user. Please log in as ${user.type} or use a different number.`);
       error.statusCode = 400;
@@ -55,7 +60,7 @@ const loginOrCreateUser = async (phone, userType) => {
   }
 
   const sessionType = DUAL_ROLE_LOGIN_PHONES.has(phone) ? userType : user.type;
-  const token = generateToken(user._id, sessionType);
+  const token = generateToken(user._id, sessionType, user.authVersion || 0);
   return buildLoginResponse(user, token, sessionType);
 };
 
@@ -112,6 +117,8 @@ exports.sendOtp = async (req, res) => {
 
     const userType = type || "Retail";
 
+    const existing = await User.findOne({ phone });
+    if (existing?.deletedAt) return res.status(403).json({ message: 'This account has been deleted. Please contact support.' });
     if (DIRECT_LOGIN_PHONES.has(phone)) {
       console.log(`[SMS AUTH] Direct login enabled for bypass number ${phone}.`);
       const loginData = await loginOrCreateUser(phone, userType);
@@ -203,7 +210,7 @@ exports.getProfile = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const { type } = req.query; // 'Retail' or 'Business'
-    const query = {};
+    const query = { deletedAt: null };
     if (type) query.type = type;
 
     console.log(`[ADMIN] Fetching users with query:`, query);
@@ -232,7 +239,7 @@ exports.updateUserStatus = async (req, res) => {
     // Changing account status (Active/Blocked) should NOT automatically approve KYC.
     // KYC must be handled via the verify-kyc endpoint.
 
-    const user = await User.findByIdAndUpdate(id, update, { new: true });
+    const user = await User.findOneAndUpdate({ _id: id, deletedAt: null }, update, { new: true });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     res.status(200).json({ message: `User status updated to ${status}`, user });
@@ -625,6 +632,8 @@ exports.verifyBusinessKYC = async (req, res) => {
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    if (user.deletedAt) return res.status(409).json({ message: 'Deleted customers cannot be modified' });
+
     // Logic: Don't allow approval if no documents are present
     if (status === "Approved") {
       const d = user.businessDetails || {};
@@ -692,5 +701,54 @@ exports.saveFcmToken = async (req, res) => {
     res.status(500).json({
       error: err.message
     });
+  }
+};
+
+// Convert the existing account; historical orders retain their original pricing/type.
+exports.convertToBusiness = async (req, res) => {
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid customer ID' });
+    }
+    const current = await User.findById(req.params.id);
+    if (!current) return res.status(404).json({ message: 'Customer not found' });
+    if (current.deletedAt) return res.status(409).json({ message: 'Deleted customers cannot be converted' });
+    if (current.type !== 'Retail') return res.status(409).json({ message: 'This customer is already a business customer' });
+    const details = current.businessDetails?.toObject?.() || current.businessDetails || {};
+    const businessDetails = { ...details, verificationStatus: 'Pending' };
+    for (const field of ['shopName', 'businessType', 'businessAddress']) {
+      const value = req.body?.[field];
+      if (value !== undefined) {
+        if (typeof value !== 'string' || value.length > 500) return res.status(400).json({ message: `${field} must be text of at most 500 characters` });
+        businessDetails[field] = value.trim();
+      }
+    }
+    const user = await User.findOneAndUpdate(
+      { _id: current._id, type: 'Retail', status: current.status, deletedAt: null },
+      { $set: { type: 'Business', status: current.status === 'Blocked' ? 'Blocked' : 'Pending', businessDetails, cart: [] }, $inc: { authVersion: 1 } },
+      { new: true, runValidators: true }
+    ).select('-password');
+    if (!user) return res.status(409).json({ message: 'Customer changed. Refresh the page and try again.' });
+    res.json({ message: 'Converted to Business. Customer must log in again using Business login. KYC is pending review.', user });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not convert customer', error: error.message });
+  }
+};
+
+// Keep customer and order records; revoke access and exclude from active customer lists.
+exports.softDeleteCustomers = async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length || ids.length > 500 || ids.some(id => typeof id !== 'string' || !/^[a-f0-9]{24}$/i.test(id))) {
+    return res.status(400).json({ message: 'Select between 1 and 500 valid customers' });
+  }
+  const customerIds = [...new Set(ids.map(id => id.toLowerCase()))];
+  try {
+    const result = await User.updateMany(
+      { _id: { $in: customerIds }, deletedAt: null },
+      { $set: { deletedAt: new Date(), deletedBy: req.user._id }, $inc: { authVersion: 1 } }
+    );
+    res.json({ message: `${result.modifiedCount} customer(s) soft deleted`, deletedCount: result.modifiedCount, ids: customerIds });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not delete customers. Refresh and try again.', error: error.message });
   }
 };

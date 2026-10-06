@@ -23,7 +23,9 @@ router.delete("/cart", protectUser, controller.clearCart);
 
 // Admin Routes (for Panel)
 router.get("/", protect, controller.getAllUsers);
+router.post("/bulk-delete", protect, controller.softDeleteCustomers);
 router.get("/:id", protect, controller.getUserById);
+router.patch("/:id/convert-to-business", protect, controller.convertToBusiness);
 router.patch("/:id/status", protect, controller.updateUserStatus);
 router.patch("/:id/verify-kyc", protect, controller.verifyBusinessKYC);
 

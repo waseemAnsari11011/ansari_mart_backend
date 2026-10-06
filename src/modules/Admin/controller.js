@@ -85,30 +85,42 @@ exports.getAdminProfile = async (req, res) => {
 // @access  Private/Admin
 exports.getDashboardStats = async (req, res) => {
     try {
+        const { startDate, endDate } = req.query;
+        const dateFilter = {};
+        if (startDate !== undefined || endDate !== undefined) {
+            const start = typeof startDate === 'string' ? new Date(startDate) : new Date(NaN);
+            const end = typeof endDate === 'string' ? new Date(endDate) : new Date(NaN);
+            if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) {
+                return res.status(400).json({ message: 'Provide valid startDate and endDate, with endDate after startDate.' });
+            }
+            dateFilter.createdAt = { $gte: start, $lt: end };
+        }
+
         // 1. Total Sales (sum of totalPrice from all non-cancelled orders)
         const salesData = await Order.aggregate([
-            { $match: { status: { $ne: 'Cancelled' } } },
+            { $match: { ...dateFilter, status: { $ne: 'Cancelled' } } },
             { $group: { _id: null, totalSales: { $sum: '$totalPrice' } } }
         ]);
         const totalSales = salesData[0]?.totalSales || 0;
 
         // 2. Total Orders
-        const totalOrders = await Order.countDocuments();
+        const totalOrders = await Order.countDocuments(dateFilter);
 
         // 3. User Counts
-        const retailUsers = await User.countDocuments({ type: 'Retail' });
-        const businessUsers = await User.countDocuments({ type: 'Business' });
+        const retailUsers = await User.countDocuments({ ...dateFilter, type: 'Retail', deletedAt: null });
+        const businessUsers = await User.countDocuments({ ...dateFilter, type: 'Business', deletedAt: null });
 
         // 4. Critical Alerts
         const pendingVerifications = await User.countDocuments({ 
             type: 'Business', 
+            deletedAt: null,
             'businessDetails.verificationStatus': 'Pending' 
         });
 
         const lowStockProducts = await Product.countDocuments({ stock: { $lte: 10 } });
 
         // 5. Recent Orders
-        const recentOrders = await Order.find()
+        const recentOrders = await Order.find(dateFilter)
             .sort({ createdAt: -1 })
             .limit(5)
             .populate('admin', 'name')

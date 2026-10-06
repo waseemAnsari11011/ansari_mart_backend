@@ -8,6 +8,7 @@ const bannerSchema = new mongoose.Schema({
 
 const settingSchema = new mongoose.Schema({
     banners: [bannerSchema],
+    discountRules: { type: [require('./discountSchema')], default: [] },
     logistics: {
         Retail: {
             mov: { type: Number, default: 0, min: 0 },

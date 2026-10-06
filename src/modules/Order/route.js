@@ -3,6 +3,7 @@ const router = express.Router();
 const { addOrderItems, getOrderById, updateOrderStatus, getAdminOrders, getMyOrders, updateOrderItemQuantity, updateOrderItemPrice, cancelMyOrder } = require('./controller');
 const { protect, protectAny, protectUser } = require('../Middleware/authMiddleware');
 
+router.post('/preview', protectUser, require('./controller').previewOrder);
 router.route('/').post(protectAny, addOrderItems);
 router.route('/all').get(protect, getAdminOrders);
 router.route('/myorders').get(protectAny, getMyOrders);
