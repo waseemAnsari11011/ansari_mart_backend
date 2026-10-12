@@ -735,6 +735,27 @@ exports.convertToBusiness = async (req, res) => {
   }
 };
 
+exports.convertToRetail = async (req, res) => {
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid customer ID' });
+    }
+    const current = await User.findById(req.params.id);
+    if (!current) return res.status(404).json({ message: 'Customer not found' });
+    if (current.deletedAt) return res.status(409).json({ message: 'Deleted customers cannot be converted' });
+    if (current.type !== 'Business') return res.status(409).json({ message: 'This customer is already a retail customer' });
+    const user = await User.findOneAndUpdate(
+      { _id: current._id, type: 'Business', status: current.status, deletedAt: null },
+      { $set: { type: 'Retail', status: current.status === 'Blocked' ? 'Blocked' : 'Active', cart: [] }, $inc: { authVersion: 1 } },
+      { new: true, runValidators: true }
+    ).select('-password');
+    if (!user) return res.status(409).json({ message: 'Customer changed. Refresh the page and try again.' });
+    res.json({ message: 'Converted to Retail. Customer must log in again using Retail login.', user });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not convert customer', error: error.message });
+  }
+};
+
 // Keep customer and order records; revoke access and exclude from active customer lists.
 exports.softDeleteCustomers = async (req, res) => {
   const { ids } = req.body || {};

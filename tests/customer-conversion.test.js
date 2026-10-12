@@ -95,3 +95,55 @@ test('old customer sessions are rejected on both customer and order routes; new 
         assert.equal(next, true);
     }
 });
+
+test('business to retail preserves records, clears cart and revokes login; blocked remains blocked', async t => {
+    let current;
+    t.mock.method(User, 'findById', async () => current);
+    t.mock.method(User, 'findOneAndUpdate', (filter, update, options) => {
+        assert.equal(filter.type, 'Business');
+        assert.equal(filter.status, current.status);
+        assert.equal(update.$set.type, 'Retail');
+        assert.equal(update.$set.status, current.status === 'Blocked' ? 'Blocked' : 'Active');
+        assert.deepEqual(update.$set.cart, []);
+        assert.equal(update.$inc.authVersion, 1);
+        for (const field of ['businessDetails', 'phone', 'addresses', 'name']) assert.equal(update.$set[field], undefined);
+        assert.equal(options.runValidators, true);
+        return { select: async () => ({ _id: current._id, ...update.$set }) };
+    });
+    for (const status of ['Active', 'Pending', 'Blocked']) {
+        current = new User({ phone: '9000000005', type: 'Business', status });
+        const res = response();
+        await controller.convertToRetail({ params: { id: String(current._id) } }, res);
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.data.user.type, 'Retail');
+    }
+});
+
+test('retail conversion rejects invalid, missing, deleted or retail customers and concurrent changes', async t => {
+    let current;
+    t.mock.method(User, 'findById', async () => current);
+    const write = t.mock.method(User, 'findOneAndUpdate', () => ({ select: async () => null }));
+    for (const [id, user, expected] of [
+        ['bad', null, 400],
+        [String(new mongoose.Types.ObjectId()), null, 404],
+        [String(new mongoose.Types.ObjectId()), { type: 'Retail' }, 409],
+        [String(new mongoose.Types.ObjectId()), { type: 'Business', deletedAt: new Date() }, 409],
+    ]) {
+        current = user;
+        const res = response();
+        await controller.convertToRetail({ params: { id } }, res);
+        assert.equal(res.statusCode, expected);
+    }
+    assert.equal(write.mock.callCount(), 0);
+    current = new User({ phone: '9000000005', type: 'Business' });
+    const res = response();
+    await controller.convertToRetail({ params: { id: String(current._id) } }, res);
+    assert.equal(res.statusCode, 409);
+});
+
+test('business to retail endpoint is admin protected', () => {
+    const router = require('../src/modules/User/route');
+    const route = router.stack.find(layer => layer.route?.path === '/:id/convert-to-retail').route;
+    assert.equal(route.methods.patch, true);
+    assert.equal(route.stack[0].handle, protect);
+});

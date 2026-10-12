@@ -65,7 +65,7 @@ const protectUser = async (req, res, next) => {
             }
 
             if ((decoded.authVersion || 0) !== (req.user.authVersion || 0)) {
-                return res.status(401).json({ message: 'Your account has changed. Please log in again.' });
+                return res.status(401).json({ message: 'Your account has changed. Please log in again.', code: 'ACCOUNT_CHANGED', loginType: req.user.type });
             }
             applySessionType(req.user, decoded);
 
@@ -107,7 +107,7 @@ const protectAny = async (req, res, next) => {
             }
 
             if (user.constructor?.modelName === 'User' && (decoded.authVersion || 0) !== (user.authVersion || 0)) {
-                return res.status(401).json({ message: 'Your account has changed. Please log in again.' });
+                return res.status(401).json({ message: 'Your account has changed. Please log in again.', code: 'ACCOUNT_CHANGED', loginType: user.type });
             }
             req.user = user.phone ? applySessionType(user, decoded) : user;
             next();
