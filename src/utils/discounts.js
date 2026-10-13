@@ -86,4 +86,19 @@ function normalizeSnapshotRules(rules = []) {
         return { ...plain, productOfferMode: plain.productOfferMode || 'all_units' };
     });
 }
-module.exports = { normalizeSnapshotRules, normalizeLiveRules, validateDiscountRules, calculateDiscount, priceOrder };
+function getCartOffers(rules, subtotal, customerType, isFirstOrder, items) {
+    return rules.filter(rule => rule.active && (rule.customerType === 'All' || rule.customerType === customerType))
+        .filter(rule => rule.discountType !== 'product_price' || rule.productPrices?.some(option => items.some(item => String(item.product) === String(option.product))))
+        .map(rule => {
+            const saving = calculateDiscount([rule], subtotal, customerType, isFirstOrder, items).discountAmount;
+            let status = 'eligible';
+            let extraSpend = 0;
+            if (rule.firstOrderOnly && !isFirstOrder) status = 'first_order_only';
+            else if (rule.discountType !== 'product_price' && subtotal <= rule.threshold) {
+                status = 'spend_more';
+                extraSpend = Math.floor(rule.threshold - subtotal) + 1;
+            } else if (!saving) status = 'select_option';
+            return { ...rule, saving, status, extraSpend };
+        });
+}
+module.exports = { getCartOffers, normalizeSnapshotRules, normalizeLiveRules, validateDiscountRules, calculateDiscount, priceOrder };

@@ -194,3 +194,26 @@ test('new product settings clear spend threshold while old order snapshots keep 
     // New order snapshots retain the single-unit policy when edited.
     assert.equal(priceOrder(1000, 0, normalizeSnapshotRules(live), 'Retail', false, items).discountAmount, 99);
 });
+
+test('cart offer visibility tracks customer type, first orders, strict spend thresholds and selected packs', () => {
+    const { getCartOffers, normalizeLiveRules } = require('../src/utils/discounts');
+    const product = '000000000000000000000001';
+    const rules = normalizeLiveRules([
+        rule({ name: 'Spend', threshold: 500 }),
+        rule({ name: 'Welcome', firstOrderOnly: true }),
+        rule({ name: 'Business', customerType: 'Business' }),
+        rule({ name: 'Inactive', active: false }),
+        rule({ name: 'Deal', discountType: 'product_price', value: 0, productPrices: [{ product, tierIndex: 1, offerPrice: 104 }] }),
+    ]);
+    const items = [{ product, tierIndex: 0, qty: 1, price: 149 }];
+    let offers = getCartOffers(rules, 500, 'Retail', false, items);
+    assert.equal(offers.length, 3);
+    assert.equal(offers.find(o => o.name === 'Spend').extraSpend, 1);
+    assert.equal(offers.find(o => o.name === 'Welcome').status, 'first_order_only');
+    assert.equal(offers.find(o => o.name === 'Deal').status, 'select_option');
+    offers = getCartOffers(rules, 501, 'Retail', true, [{ ...items[0], tierIndex: 1 }]);
+    assert.equal(offers.find(o => o.name === 'Spend').saving, 50);
+    assert.equal(offers.find(o => o.name === 'Welcome').status, 'eligible');
+    assert.equal(offers.find(o => o.name === 'Deal').saving, 45);
+    assert.equal(getCartOffers(rules, 149, 'Retail', true, []).some(o => o.name === 'Deal'), false);
+});

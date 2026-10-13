@@ -489,7 +489,10 @@ exports.previewOrder = async (req, res) => {
         const isFirstOrder = !(await Order.exists({ admin: req.user._id }));
         const logistics = settings?.logistics?.[userType];
         const deliveryFee = subtotal < (logistics?.mov || 0) ? (logistics.deliveryCharge || 0) : 0;
-        res.json(priceOrder(subtotal, deliveryFee, normalizeLiveRules(settings?.discountRules), userType, isFirstOrder, pricedItems));
+        const rules = normalizeLiveRules(settings?.discountRules);
+        const pricing = priceOrder(subtotal, deliveryFee, rules, userType, isFirstOrder, pricedItems);
+        const offers = require('../../utils/discounts').getCartOffers(rules, subtotal, userType, isFirstOrder, pricedItems);
+        res.json({ ...pricing, offers });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
