@@ -1,3 +1,13 @@
+const Setting = require('../Setting/model');
+const { validatePricing } = require('./validation');
+
+const pricingError = async (product) => {
+    const settings = await Setting.findOne();
+    const units = settings?.units || ['Unit'];
+    return validatePricing(product.retailPricing, 'Retail', product.retailStatus, units)
+        || validatePricing(product.businessPricing, 'Business', product.businessStatus, units);
+};
+
 const Product = require('./model');
 const Category = require('../Category/model');
 const mongoose = require('mongoose');
@@ -81,7 +91,7 @@ exports.getProducts = async (req, res) => {
             total
         });
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.name === 'ValidationError' || error.name === 'CastError' ? 400 : 500).json({ message: error.message });
     }
 };
 
@@ -100,7 +110,7 @@ exports.getProductById = async (req, res) => {
             res.status(404).json({ message: 'Product not found' });
         }
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.name === 'ValidationError' || error.name === 'CastError' ? 400 : 500).json({ message: error.message });
     }
 };
 
@@ -113,6 +123,9 @@ exports.createProduct = async (req, res) => {
             name, description, category, images,
             brand, mrp, retailStatus, businessStatus, retailPricing, businessPricing
         } = req.body;
+
+        const error = await pricingError({ retailPricing: retailPricing ?? [], businessPricing: businessPricing ?? [], retailStatus: retailStatus || 'Active', businessStatus: businessStatus || 'Active' });
+        if (error) return res.status(400).json({ message: error });
 
         const product = await Product.create({
             name,
@@ -130,7 +143,7 @@ exports.createProduct = async (req, res) => {
 
         res.status(201).json(product);
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.name === 'ValidationError' || error.name === 'CastError' ? 400 : 500).json({ message: error.message });
     }
 };
 
@@ -147,6 +160,13 @@ exports.updateProduct = async (req, res) => {
         const product = await Product.findById(req.params.id);
 
         if (product) {
+            const error = await pricingError({
+                retailPricing: retailPricing !== undefined ? retailPricing : product.retailPricing,
+                businessPricing: businessPricing !== undefined ? businessPricing : product.businessPricing,
+                retailStatus: retailStatus !== undefined ? retailStatus : product.retailStatus,
+                businessStatus: businessStatus !== undefined ? businessStatus : product.businessStatus
+            });
+            if (error) return res.status(400).json({ message: error });
             product.name = name || product.name;
             product.description = description || product.description;
             product.category = category || product.category;
@@ -164,7 +184,7 @@ exports.updateProduct = async (req, res) => {
             res.status(404).json({ message: 'Product not found' });
         }
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.name === 'ValidationError' || error.name === 'CastError' ? 400 : 500).json({ message: error.message });
     }
 };
 
@@ -182,6 +202,6 @@ exports.deleteProduct = async (req, res) => {
             res.status(404).json({ message: 'Product not found' });
         }
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(error.name === 'ValidationError' || error.name === 'CastError' ? 400 : 500).json({ message: error.message });
     }
 };
