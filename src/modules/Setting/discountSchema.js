@@ -9,6 +9,6 @@ module.exports = new mongoose.Schema({
     productPrices: [{ product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true }, tierIndex: { type: Number, min: 0, required: true }, offerPrice: { type: Number, min: 0, required: true }, _id: false }],
     minSubtotal: { type: Number, min: 0, default: 0 },
     maxSubtotal: { type: Number, min: 0, default: null },
-    discountType: { type: String, enum: ['fixed', 'percentage', 'product_price'], default: 'fixed' },
+    discountType: { type: String, enum: ['fixed', 'percentage', 'product_price', 'order_product_price'], default: 'fixed' },
     value: { type: Number, min: 0, required: true }
 }, { _id: false });

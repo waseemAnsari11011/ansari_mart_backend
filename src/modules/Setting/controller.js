@@ -116,7 +116,7 @@ exports.updateDiscounts = async (req, res) => {
     }
     try {
         const Product = require('../Product/model');
-        for (const rule of discountRules.filter(rule => rule.discountType === 'product_price')) {
+        for (const rule of discountRules.filter(rule => ['product_price', 'order_product_price'].includes(rule.discountType))) {
             for (const selected of rule.productPrices) {
                 const product = await Product.findById(selected.product);
                 const types = rule.customerType === 'All' ? ['Retail', 'Business'] : [rule.customerType];

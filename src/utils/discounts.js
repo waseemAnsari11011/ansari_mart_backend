@@ -5,20 +5,21 @@ function validateDiscountRules(rules) {
     return rules.map(rule => {
         if (!rule || typeof rule.name !== 'string' || !rule.name.trim() || rule.name.length > 100) throw new Error('Each offer needs a name (maximum 100 characters)');
         if (!['All', 'Retail', 'Business'].includes(rule.customerType)) throw new Error('Invalid customer type');
-        if (!['fixed', 'percentage', 'product_price'].includes(rule.discountType)) throw new Error('Invalid discount type');
+        if (!['fixed', 'percentage', 'product_price', 'order_product_price'].includes(rule.discountType)) throw new Error('Invalid discount type');
         const numeric = (value, label) => {
             if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10000000) throw new Error(`${label} must be a valid non-negative amount`);
             return money(value);
         };
+        const isProduct = ['product_price', 'order_product_price'].includes(rule.discountType);
         const minSubtotal = rule.discountType === 'product_price' ? 0 : numeric(rule.minSubtotal === undefined ? 0 : rule.minSubtotal, 'Minimum subtotal');
         const maxSubtotal = rule.discountType === 'product_price' || rule.maxSubtotal == null ? null : numeric(rule.maxSubtotal, 'Maximum subtotal');
         const threshold = rule.discountType === 'product_price' ? 0 : numeric(rule.threshold ?? rule.maxSubtotal ?? rule.minSubtotal ?? 0, 'Order value threshold');
-        const value = rule.discountType === 'product_price' ? 0 : numeric(rule.value, 'Discount');
-        if ((rule.discountType !== 'product_price' && value <= 0) || (rule.discountType === 'percentage' && value > 100)) throw new Error('Discount must be positive; percentage cannot exceed 100');
+        const value = isProduct ? 0 : numeric(rule.value, 'Discount');
+        if ((!isProduct && value <= 0) || (rule.discountType === 'percentage' && value > 100)) throw new Error('Discount must be positive; percentage cannot exceed 100');
         if (maxSubtotal !== null && maxSubtotal < minSubtotal) throw new Error('Maximum subtotal cannot be below minimum subtotal');
         if (typeof rule.active !== 'boolean' || typeof rule.firstOrderOnly !== 'boolean') throw new Error('Offer flags must be true or false');
-        const productPrices = rule.discountType === 'product_price' ? rule.productPrices : [];
-        if (!Array.isArray(productPrices) || (rule.discountType === 'product_price' && (!productPrices.length || productPrices.length > 100))) throw new Error('Select between 1 and 100 product options');
+        const productPrices = isProduct ? rule.productPrices : [];
+        if (!Array.isArray(productPrices) || (isProduct && (!productPrices.length || productPrices.length > 100))) throw new Error('Select between 1 and 100 product options');
         const seen = new Set();
         const validatedProducts = productPrices.map(item => {
             if (!item || typeof item.product !== 'string' || !/^[a-f0-9]{24}$/i.test(item.product) || !Number.isInteger(item.tierIndex) || item.tierIndex < 0) throw new Error('Select a valid product and option');
@@ -37,7 +38,8 @@ function calculateDiscount(rules, subtotal, customerType, isFirstOrder, items = 
     let discountProducts = [];
     for (const rule of rules || []) {
         if (!rule.active || (rule.customerType !== 'All' && rule.customerType !== customerType) || (rule.firstOrderOnly && !isFirstOrder)) continue;
-        const isProductOffer = rule.discountType === 'product_price';
+        const isProductOffer = ['product_price', 'order_product_price'].includes(rule.discountType);
+        if (rule.discountType === 'order_product_price' && subtotal < rule.threshold) continue;
         const legacyProductOffer = isProductOffer && rule.productOfferMode === 'all_units';
         // Only amount offers (and historical product snapshots) use a spend threshold.
         if ((!isProductOffer || legacyProductOffer) && (rule.threshold != null ? subtotal <= rule.threshold : (subtotal < rule.minSubtotal || (rule.maxSubtotal != null && subtotal > rule.maxSubtotal)))) continue;
@@ -59,7 +61,7 @@ function calculateDiscount(rules, subtotal, customerType, isFirstOrder, items = 
                 }
             }
         }
-        const amount = money(Math.min(subtotal, rule.discountType === 'product_price' ? productSavings : rule.discountType === 'percentage' ? subtotal * rule.value / 100 : rule.value));
+        const amount = money(Math.min(subtotal, isProductOffer ? productSavings : rule.discountType === 'percentage' ? subtotal * rule.value / 100 : rule.value));
         if (amount > discountAmount) {
             discountAmount = amount;
             discountName = rule.name;
@@ -94,9 +96,9 @@ function getCartOffers(rules, subtotal, customerType, isFirstOrder, items) {
             let status = 'eligible';
             let extraSpend = 0;
             if (rule.firstOrderOnly && !isFirstOrder) status = 'first_order_only';
-            else if (rule.discountType !== 'product_price' && subtotal <= rule.threshold) {
+            else if (rule.discountType === 'order_product_price' ? subtotal < rule.threshold : rule.discountType !== 'product_price' && subtotal <= rule.threshold) {
                 status = 'spend_more';
-                extraSpend = Math.floor(rule.threshold - subtotal) + 1;
+                extraSpend = rule.discountType === 'order_product_price' ? Math.ceil(rule.threshold - subtotal) : Math.floor(rule.threshold - subtotal) + 1;
             } else if (!saving) status = 'select_option';
             return { ...rule, saving, status, extraSpend };
         });

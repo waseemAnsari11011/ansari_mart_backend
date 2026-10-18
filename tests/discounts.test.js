@@ -217,3 +217,33 @@ test('cart offer visibility tracks customer type, first orders, strict spend thr
     assert.equal(offers.find(o => o.name === 'Deal').saving, 45);
     assert.equal(getCartOffers(rules, 149, 'Retail', true, []).some(o => o.name === 'Deal'), false);
 });
+
+test('order value product offer supports free or special prices at the inclusive spend threshold', () => {
+    const { getCartOffers, normalizeLiveRules, normalizeSnapshotRules } = require('../src/utils/discounts');
+    const product = '000000000000000000000001';
+    const [offer] = validateDiscountRules([rule({ discountType: 'order_product_price', threshold: 1000, value: 0, productPrices: [{ product, tierIndex: 0, offerPrice: 0 }] })]);
+    const items = [{ product, tierIndex: 0, price: 60, qty: 3 }];
+    assert.equal(offer.threshold, 1000);
+    assert.equal(normalizeLiveRules([offer])[0].threshold, 1000);
+    assert.equal(priceOrder(999, 40, [offer], 'Retail', true, items).discountAmount, 0);
+    const priced = priceOrder(1000, 40, [offer], 'Retail', true, items);
+    assert.equal(priced.discountAmount, 60);
+    assert.equal(priced.totalPrice, 980);
+    assert.equal(priced.discountProducts[0].qty, 1);
+    assert.equal(priced.discountProducts[0].offerPrice, 0);
+    assert.equal(priceOrder(1000, 0, [offer], 'Retail', true, []).discountAmount, 0);
+    assert.equal(priceOrder(1000, 0, [offer], 'Retail', true, [{ ...items[0], tierIndex: 1 }]).discountAmount, 0);
+    assert.equal(priceOrder(1000, 0, [{ ...offer, productPrices: [{ product, tierIndex: 0, offerPrice: 20 }] }], 'Retail', true, items).discountAmount, 40);
+    assert.equal(priceOrder(1000, 0, [offer, rule({ value: 100 })], 'Retail', true, items).discountAmount, 100);
+    assert.equal(priceOrder(1000, 0, [{ ...offer, customerType: 'Business' }], 'Retail', true, items).discountAmount, 0);
+    assert.equal(priceOrder(1000, 0, [{ ...offer, firstOrderOnly: true }], 'Retail', false, items).discountAmount, 0);
+    assert.equal(priceOrder(1000, 0, normalizeSnapshotRules([offer]), 'Retail', true, items).discountAmount, 60);
+    const pending = getCartOffers([offer], 900, 'Retail', true, [])[0];
+    assert.equal(pending.status, 'spend_more');
+    assert.equal(pending.extraSpend, 100);
+    assert.equal(getCartOffers([offer], 1000, 'Retail', true, [])[0].status, 'select_option');
+    assert.equal(getCartOffers([offer], 1000, 'Retail', true, items)[0].status, 'eligible');
+    assert.throws(() => validateDiscountRules([{ ...offer, threshold: -1 }]));
+    assert.throws(() => validateDiscountRules([{ ...offer, productPrices: [] }]));
+    assert.throws(() => validateDiscountRules([{ ...offer, productPrices: [{ product, tierIndex: 0, offerPrice: -1 }] }]));
+});
